@@ -797,7 +797,7 @@ class PokemonGoldEnv(gym.Env):
             "caught_count":    read_caught_pokemon_count(self.pyboy),
             "badge_count":     read_badge_count(self.pyboy),
             "visited_tiles":   len(self._visited_positions),
-            "visited_maps":    len(self._maps_seen),
+            "visited_maps":    len(self._maps_seen - self._trap_maps),
             "episode_xp":      self._episode_xp,
             "level":           read_level(self.pyboy),
             "action_history":  self._action_history if self.record_actions else [],
