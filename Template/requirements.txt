@@ -1,0 +1,35 @@
+# ──────────────────────────────────────────────────────────────
+#  PONG RL – Python-Abhängigkeiten
+# ──────────────────────────────────────────────────────────────
+#
+# Installation:
+#   pip install -r requirements.txt
+#
+# Empfehlung: Virtuelle Umgebung nutzen!
+#   python -m venv venv
+#   source venv/bin/activate      # Linux / macOS
+#   venv\Scripts\activate         # Windows
+#   pip install -r requirements.txt
+#
+# ── PAKETE ────────────────────────────────────────────────────
+
+# Pygame: Spielfenster, Rendering, Tastatureingabe
+pygame>=2.5.0
+
+# Gymnasium: Standard-Interface für RL-Umgebungen (Nachfolger von OpenAI Gym)
+gymnasium>=0.29.0
+
+# Stable-Baselines3: PPO-Implementierung (bewährt, gut dokumentiert)
+# Enthält: PPO, A2C, SAC, TD3, DQN und viele Hilfsfunktionen
+stable-baselines3>=2.3.0
+
+# NumPy: Numerische Berechnungen, Arrays
+numpy>=1.24.0
+
+# PyTorch: Deep-Learning-Framework (wird von SB3 intern genutzt)
+# GPU-Version: pip install torch --index-url https://download.pytorch.org/whl/cu121
+torch>=2.0.0
+
+# TensorBoard: Trainingsvisualisierung (optional aber empfohlen)
+# Starten: tensorboard --logdir ./tensorboard_logs
+tensorboard>=2.14.0

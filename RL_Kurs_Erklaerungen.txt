@@ -1,0 +1,934 @@
+╔══════════════════════════════════════════════════════════════════════════════╗
+║   REINFORCEMENT LEARNING – KURSKAPITEL ERKLÄRT AM POKEMON GOLD PROJEKT      ║
+╚══════════════════════════════════════════════════════════════════════════════╝
+
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+INTRODUCTION TO REINFORCEMENT LEARNING
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+
+UNDERSTANDING REINFORCEMENT LEARNING
+──────────────────────────────────────
+Reinforcement Learning (RL) ist ein Paradigma des maschinellen Lernens, das
+sich grundlegend von Supervised Learning und Unsupervised Learning unterscheidet.
+
+Beim Supervised Learning gibt es für jeden Input ein vordefiniertes "richtiges"
+Label – jemand hat tausende Bilder mit "Katze" oder "Hund" beschriftet, und das
+Netz lernt diese Zuordnung. Das ist beim Spielen eines Videospiels nicht möglich:
+Niemand kann für jeden der Millionen möglichen Spielzustände vorschreiben,
+welche Taste die "richtige" ist.
+
+Beim Reinforcement Learning lernt ein Agent stattdessen durch Interaktion mit
+seiner Umgebung. Der Agent führt Aktionen aus, beobachtet was passiert, und
+erhält ein Belohnungssignal. Durch viele Wiederholungen lernt er, welche
+Verhaltensweisen zu hohen Belohnungen führen – ganz ähnlich wie ein Kind lernt
+nicht die Hand in die Flamme zu halten: nicht weil jemand es erklärt hat,
+sondern weil der Schmerz ein klares negatives Feedback-Signal liefert.
+
+Das formale Grundprinzip von RL ist der Regelkreis:
+  Umgebung → Beobachtung → Agent → Aktion → Umgebung → neue Beobachtung → ...
+
+Der Agent sieht einen Zustand s, wählt eine Aktion a, die Umgebung geht in
+einen neuen Zustand s' über und gibt einen Reward r zurück. Das Ziel des
+Agenten ist es, den kumulierten Reward über eine gesamte Episode zu maximieren –
+nicht nur den unmittelbaren Reward, sondern alle zukünftigen Rewards zusammen.
+
+RL ist das Lernprinzip hinter dem gesamten Projekt: Ein Agent lernt durch
+Ausprobieren und Feedback.
+
+Im Pokemon-Projekt:
+  • Agent       = das neuronale Netz (PPO-Modell)
+  • Umgebung    = Pokemon Gold im PyBoy-Emulator (PokemonGoldEnv)
+  • Aktion      = eine der 6 Tasten (up, down, left, right, a, b)
+  • Belohnung   = was in _calculate_reward() definiert ist
+  • Zustand     = das 84×84-Bild + die 10 RAM-Features
+
+Die KI hat am Anfang keine Ahnung was sie tut. Sie drückt zufällige Tasten,
+bekommt manchmal +0.02 (neue Kachel), manchmal -3.0 (Flucht), manchmal +25
+(Pokemon gefangen) – und lernt mit der Zeit welche Aktionen in welchen
+Situationen gut sind.
+
+Ein wichtiges Konzept ist die Unterscheidung zwischen Episode und Schritt:
+Ein Schritt ist eine einzelne Aktion (eine Taste drücken). Eine Episode ist
+eine komplette Sequenz vom Startzustand bis zum Ende (z.B. bis die KI besiegt
+wird oder MAX_STEPS_PER_EPISODE erreicht ist). Der kumulierte Reward einer
+Episode ist die Summe aller Einzelrewards – dieser Wert steigt im Training und
+zeigt wie gut die KI geworden ist.
+
+
+COMPONENTS OF REINFORCEMENT LEARNING SYSTEMS
+──────────────────────────────────────────────
+Die fünf Kernkomponenten eines RL-Systems, alle direkt im Code sichtbar:
+
+  Komponente       │ Pokemon-Projekt
+  ─────────────────┼──────────────────────────────────────────────
+  Policy           │ Das PPO-Netz: model.predict(obs)
+  Reward Signal    │ _calculate_reward() in pokemon_env.py
+  Value Function   │ Der Critic im Actor-Critic (schätzt zuk. Reward)
+  Model (der Welt) │ Nicht vorhanden – echter Emulator wird genutzt
+  Environment      │ PokemonGoldEnv – PyBoy-Emulator
+
+Die Policy ist die "Strategie" des Agenten – eine Funktion, die einen Zustand
+als Input nimmt und eine Aktion (oder eine Wahrscheinlichkeitsverteilung über
+Aktionen) als Output liefert. Eine gute Policy sagt: "Wenn ich im Kampf bin
+und A drücke, greife ich an – das ist fast immer besser als B (Flucht)."
+
+Das Reward Signal ist das zentrale Designelement. Es ist das einzige Feedback
+das der Agent direkt bekommt. Deshalb ist Reward Shaping (das Gestalten des
+Reward Signals) so entscheidend und so schwierig: zu viel, zu wenig, oder
+falsch platzierte Rewards führen zu unerwartetem Verhalten.
+
+Die Value Function ist eine Hilfsgröße: sie schätzt wie gut ein bestimmter
+Zustand langfristig ist. Nicht "wie viel Reward gibt es jetzt", sondern
+"wie viel Reward ist von diesem Punkt aus insgesamt zu erwarten".
+
+Ein Weltmodell (Model of the Environment) würde bedeuten, dass der Agent
+vorhersagen kann was als nächstes passiert. Im Pokemon-Projekt gibt es keines –
+die KI muss alles durch echte Spielerfahrung lernen.
+
+
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+DYNAMIC PROGRAMMING AND MARKOV DECISION PROCESSES
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+
+INTRODUCTION TO SEQUENTIAL DECISION MAKING
+────────────────────────────────────────────
+Pokemon Gold ist ein klassisches sequentielles Entscheidungsproblem: Jede
+Taste die gedrückt wird beeinflusst den nächsten Zustand. Die Entscheidung
+bei Schritt 100 (links oder rechts ins Gras laufen) beeinflusst ob bei
+Schritt 150 ein Kampf stattfindet.
+
+Sequentielle Entscheidungsprobleme unterscheiden sich fundamental von
+einmaligen Entscheidungen (wie beim Bandit-Problem): Die Konsequenz einer
+Aktion zeigt sich oft erst viele Schritte später, und frühere Aktionen
+schaffen die Voraussetzungen für spätere. Wer beim Schach einen Bauern bewegt,
+sieht die Konsequenz vielleicht erst 20 Züge später – oder nie, wenn es ein
+Fehler war.
+
+Das formale Modell dafür heißt Markov Decision Process (MDP):
+  • S        = alle möglichen Spielzustände (Bild + RAM)
+  • A        = {up, down, left, right, a, b}
+  • P(s'|s,a) = Wahrscheinlichkeit des nächsten Zustands (bestimmt PyBoy)
+  • R(s,a)   = Belohnung (die _calculate_reward()-Funktion)
+  • γ        = Discount-Faktor (GAMMA = 0.99 in config.py)
+
+Die Markov-Eigenschaft ist die wichtigste Annahme: der nächste Zustand hängt
+NUR vom aktuellen Zustand ab, nicht von der gesamten Spielgeschichte. Formal
+ausgedrückt: P(s'|s,a) = P(s'|s₀, a₀, s₁, a₁, ..., sₙ, a). Man muss sich
+also nicht merken wie man hierher gekommen ist – der aktuelle Zustand enthält
+alle relevante Information.
+
+Deshalb reicht der aktuelle Frame + RAM-Werte als Input – die KI muss sich
+nicht alles merken was zuvor passiert ist. In der Praxis ist die Markov-
+Eigenschaft bei Pokemon nicht perfekt erfüllt (ein Gegner könnte vergiftet
+sein, was auf dem aktuellen Frame nicht sichtbar ist), aber sie ist eine gute
+Näherung.
+
+
+DYNAMIC PROGRAMMING
+────────────────────
+Dynamic Programming (DP) ist eine mathematische Methode um MDPs exakt zu
+lösen, wenn das vollständige Modell der Welt bekannt ist (alle Übergangs-
+wahrscheinlichkeiten P(s'|s,a) und alle Rewards R(s,a)).
+
+Die Idee von DP ist es, das große Problem in kleinere Teilprobleme aufzuteilen
+und Zwischenergebnisse wiederzuverwenden. Die wichtigsten DP-Algorithmen im
+RL-Kontext sind:
+
+  Policy Iteration:  Starte mit einer zufälligen Policy, bewerte sie
+                     (berechne V(s) für alle Zustände), verbessere sie,
+                     bewerte erneut, ... bis zur Konvergenz.
+
+  Value Iteration:   Starte mit V(s) = 0 für alle Zustände, aktualisiere
+                     iterativ gemäß der Bellman-Gleichung bis zur Konvergenz,
+                     leite dann die optimale Policy ab.
+
+Bei Pokemon Gold ist DP nicht anwendbar: PyBoy ist eine Blackbox mit Milliarden
+möglicher Zustände. Es ist nicht im Voraus bekannt was passiert wenn die KI
+links läuft – der Emulator muss es ausführen. Deshalb wird Model-Free Learning
+genutzt – die KI lernt durch direktes Erleben statt durch mathematische
+Berechnung.
+
+DP ist trotzdem wichtig als theoretisches Fundament, weil PPO und Q-Learning
+auf denselben Prinzipien basieren – nur approximiert und modell-frei statt
+exakt und modell-basiert.
+
+
+BELLMAN'S EQUATION
+───────────────────
+Die Bellman-Gleichung ist die wichtigste Gleichung im gesamten Reinforcement
+Learning. Richard Bellman formulierte sie in den 1950er Jahren und sie bildet
+die theoretische Grundlage für nahezu jeden modernen RL-Algorithmus.
+
+Die zentrale Idee: der Wert eines Zustands lässt sich rekursiv definieren.
+Der Wert von heute ist der heutige Reward plus der (diskontierte) Wert von morgen.
+In formaler Schreibweise:
+
+    V(s) = R(s, a) + γ · V(s')
+
+Dabei ist:
+  V(s)   = Wert des aktuellen Zustands (erwarteter kumulierter zukünftiger Reward)
+  R(s,a) = unmittelbarer Reward für Aktion a in Zustand s
+  γ      = Discount-Faktor (0 < γ < 1, im Projekt: GAMMA = 0.99)
+  V(s')  = Wert des Folgezustands (ebenfalls nach Bellman definiert)
+
+Die Gleichung ist rekursiv: V(s) enthält V(s'), das wiederum V(s'') enthält
+und so weiter. Sie "entfaltet" sich über alle zukünftigen Schritte bis zum
+Ende der Episode. Mathematisch konvergiert diese Rekursion wegen des Faktors γ
+(der kleiner als 1 ist) zu einem endlichen Wert.
+
+Am Pokemon-Beispiel konkret:
+Die KI steht am Eingang von Route 29. Was ist dieser Zustand wert?
+
+    V(Route29-Eingang) = R(jetzt) + 0.99 · V(nächster Zustand)
+
+  • Wenn sie jetzt ins Gras läuft: R = +0.02 (neue Kachel)
+  • Der nächste Zustand (tiefer in Route 29) ist mehr wert weil dort
+    XP und Pokemon fangen möglich sind
+  • 0.99 = GAMMA: zukünftige Belohnungen sind leicht weniger wert
+    als sofortige
+
+Die vollständige Entfaltung über alle Schritte ergibt:
+
+    V(s₀) = R₀ + γ·R₁ + γ²·R₂ + γ³·R₃ + ... = Σ γᵗ · Rₜ
+
+Diese Summe nennt man den Return G. Das ist genau was der Critic im PPO-Netz
+schätzt: nicht den momentanen Reward, sondern den gesamten diskontierten
+zukünftigen Return.
+
+
+WARUM EINEN DISCOUNT-FAKTOR?
+Der Discount-Faktor γ dient mehreren Zwecken:
+
+  1. Mathematische Konvergenz: Ohne Diskontierung könnte der Return unendlich
+     groß werden (wenn die Episode nie endet). γ < 1 garantiert dass die Summe
+     konvergiert.
+
+  2. Zeitpräferenz: Ein Reward jetzt ist mehr wert als derselbe Reward in der
+     Zukunft. Das entspricht der wirtschaftlichen Zeitpräferenz (ein Euro heute
+     ist mehr wert als ein Euro in einem Jahr).
+
+  3. Unsicherheit: Je weiter in der Zukunft, desto unsicherer ist der Reward.
+     Diskontierung trägt diesem Risiko Rechnung.
+
+Was γ = 0.99 bedeutet: Der Reward in 100 Schritten wird mit 0.99¹⁰⁰ ≈ 0.37
+gewichtet – er wird also noch zu 37% berücksichtigt. Die KI denkt damit
+langfristig genug um das Fangen eines Pokemon (was 100-300 Schritte entfernt
+sein kann) als lohnenswertes Ziel zu erkennen.
+
+Wäre γ = 0.5: Der Reward in 10 Schritten wäre mit 0.5¹⁰ ≈ 0.001 bewertet –
+nahezu irrelevant. Die KI würde ausschließlich auf kurzfristige Rewards
+reagieren und niemals langfristige Ziele wie das Fangen von Pokemon verfolgen.
+
+
+DIE BELLMAN-OPTIMALITÄTSGLEICHUNG
+Die einfache Bellman-Gleichung gilt für eine gegebene Policy π. Die Bellman-
+Optimalitätsgleichung beschreibt dagegen den Wert unter der bestmöglichen
+Policy:
+
+    V*(s) = max_a [ R(s,a) + γ · Σ P(s'|s,a) · V*(s') ]
+
+Das bedeutet: der optimale Wert eines Zustands ist das Maximum über alle
+möglichen Aktionen. Für jede Aktion betrachten wir den unmittelbaren Reward
+plus den gewichteten zukünftigen Wert aller möglichen Folgezustände.
+
+Diese Gleichung kann direkt nicht gelöst werden wenn P(s'|s,a) unbekannt ist
+(was bei Pokemon der Fall ist). Deshalb brauchen wir model-freie Algorithmen
+wie Q-Learning oder PPO, die diese Gleichung approximieren ohne das Modell
+explizit zu kennen.
+
+Der Critic im PPO-Netz schätzt genau V*(s). Er lernt "welcher Spielzustand
+ist wie viel wert" – und der Actor nutzt das um bessere Entscheidungen zu
+treffen.
+
+  Wenn GAMMA = 0.99: die KI denkt ~100 Schritte in die Zukunft.
+  Wenn GAMMA = 0.50: sie würde fast nur an die nächsten 2-3 Schritte
+                     denken – dann würde sie nie Pokemon fangen wollen
+                     weil das zu weit weg ist.
+
+
+GENERAL UTILITY FUNCTIONS
+──────────────────────────
+Die Utility Function (oder Reward Function) definiert was der Agent optimieren
+soll. Im Projekt entspricht das der _calculate_reward()-Funktion in pokemon_env.py.
+
+Das Design dieser Funktion ist eine der schwierigsten Aufgaben im RL, weil der
+Agent die Funktion strikt buchstabengetreu optimiert – auch auf Weisen die nicht
+gemeint waren. Dieses Phänomen nennt sich Goodhart's Law: "Sobald ein Maß zum
+Ziel wird, hört es auf ein gutes Maß zu sein."
+
+Das Belohnungssystem muss eine Balance finden zwischen:
+
+  • Sparse (selten):  +25 Pokemon gefangen
+    → KI lernt langsam, generalisiert aber gut, weniger Reward Hacking
+
+  • Dense (häufig):   +0.02 neue Kachel
+    → schnelleres Lernen, Gefahr von Reward Hacking
+
+Das Problem das aufgetreten ist (KI dreht im Kreis für Kachel-Rewards,
+oder +17 Gratis-Reward durch Reset-Bug, oder +40.000 durch XP-Mismatch-Bug)
+nennt sich Reward Hacking – die KI findet und nutzt Lücken in der Utility
+Function die nicht gemeint waren, aber mathematisch optimal sind.
+
+Reward Hacking ist kein Fehler des Agenten – er macht genau was ihm gesagt
+wird. Der Fehler liegt in der Spezifikation der Utility Function.
+
+
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+BANDIT PROBLEMS
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+
+THE ONE-ARMED BANDIT PROBLEM
+──────────────────────────────
+Das Bandit-Problem ist die einfachste Form von Reinforcement Learning und dient
+als Einstieg in das fundamentale Dilemma: Exploitation vs. Exploration.
+
+Stell dir einen einarmigen Banditen (Spielautomaten) vor: du kannst den Hebel
+ziehen und bekommst manchmal Geld, manchmal nichts. Sollst du weiterziehen oder
+aufhören? Sollst du denselben Automaten nochmal nutzen oder einen anderen
+ausprobieren?
+
+Das Problem in reiner Form: Du hast eine Aktion, unbekannte Auszahlungs-
+wahrscheinlichkeit, und musst durch Versuche lernen ob es sich lohnt.
+
+In Pokemon: Soll die KI beim nächsten Schritt 'a' drücken (Angriff im Kampf,
+mögliche XP) oder weglaufen (kein Risiko, keine Belohnung)? Jede einzelne
+Aktion ohne Kontext – das ist das One-Armed-Bandit-Problem.
+
+
+THE MULTIPLE ARM BANDIT PROBLEM
+────────────────────────────────
+Beim Multi-Armed-Bandit-Problem gibt es mehrere Aktionen (mehrere "Arme")
+mit jeweils unbekannten, unterschiedlichen Auszahlungswahrscheinlichkeiten.
+Die Herausforderung: Wie verteile ich meine Versuche optimal?
+
+Die KI hat 6 Tasten (6 "Arme"). Welche drücken? Wenn 'a' im Kampf oft zu
+XP führt und 'b' oft zu Flucht (-3.0), sollte die KI 'a' bevorzugen – aber
+sie muss das erst herausfinden.
+
+Das zentrale Dilemma ist Exploration vs. Exploitation:
+  Exploitation: nutze die bisher beste bekannte Aktion (sichere Wahl)
+  Exploration:  probiere andere Aktionen (könnte besser oder schlechter sein)
+
+Bekannte Lösungsstrategien für das Bandit-Problem:
+  • ε-greedy: Wähle mit Wahrscheinlichkeit ε eine zufällige Aktion,
+              sonst die beste bekannte. Einfach und weit verbreitet.
+  • UCB (Upper Confidence Bound): Wähle Aktionen bevorzugt die seltener
+              probiert wurden – der "optimistische" Ansatz.
+  • Thompson Sampling: Bayesianischer Ansatz, sampling aus Posterior-
+              Verteilung über Auszahlungswahrscheinlichkeiten.
+
+In PPO wird Exploration durch den Entropie-Koeffizient gesteuert:
+  ENT_COEF = 0.02 → KI wählt häufiger die beste bekannte Aktion
+  ENT_COEF = 0.05 → KI exploriert häufiger, wählt öfter suboptimale Aktionen
+
+Der wichtige Unterschied zum vollständigen RL-Problem: beim Bandit-Problem
+gibt es keinen Zustandswechsel. Jeder Zug ist unabhängig. Im sequentiellen
+Setting (wie Pokemon) hängen Zustände voneinander ab – das führt zum MDP.
+
+
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+Q-LEARNING
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+
+Q-LEARNING UND DIE Q-FUNKTION
+───────────────────────────────
+Q-Learning wurde 1989 von Chris Watkins entwickelt und war ein Durchbruch in
+der RL-Forschung: Es ist der erste model-freie Algorithmus der beweisbar zur
+optimalen Policy konvergiert (unter bestimmten Bedingungen).
+
+Die Grundidee: Statt den Wert eines Zustands V(s) zu lernen, lernt Q-Learning
+den Wert einer Zustand-Aktion-Kombination:
+
+    Q(s, a) = erwarteter kumulierter Reward wenn ich in Zustand s die
+              Aktion a wähle und danach optimal weiterspiele.
+
+Die optimale Q-Funktion erfüllt die Bellman-Optimalitätsgleichung:
+
+    Q*(s, a) = R(s,a) + γ · max_a' Q*(s', a')
+
+Der Vorteil von Q statt V: Aus Q(s, a) lässt sich die optimale Policy direkt
+ablesen – wähle einfach die Aktion mit dem höchsten Q-Wert:
+
+    π*(s) = argmax_a Q*(s, a)
+
+Pokemon-Beispiel für Q-Werte:
+  • Q(im Kampf, 'a')     ≈ +50  (Angriff → XP, gut!)
+  • Q(im Kampf, 'b')     ≈ -3   (Flucht, Strafe)
+  • Q(auf Gras, 'up')    ≈ +5   (bewegt sich, könnte Kampf auslösen)
+  • Q(auf Gras, 'left')  ≈ +3   (bewegt sich in andere Richtung)
+
+Die KI wählt immer die Aktion mit dem höchsten Q-Wert für den aktuellen
+Zustand. Das ist Exploitation. Für Exploration wird manchmal trotzdem eine
+zufällige Aktion gewählt (ε-greedy oder über Entropie-Bonus).
+
+
+TEMPORAL DIFFERENCE LEARNING (TD-LEARNING)
+────────────────────────────────────────────
+Temporal Difference Learning ist der Lernmechanismus hinter Q-Learning.
+Der Name kommt daher, dass das Lernsignal eine Differenz zwischen zwei
+zeitlich versetzten Schätzungen ist.
+
+Das Problem beim klassischen Monte-Carlo-Ansatz: Man müsste immer eine ganze
+Episode durchspielen, um den tatsächlichen Return zu kennen, und dann alle
+Q-Werte auf dieser Basis aktualisieren. Das ist langsam und bei langen
+Episoden unpraktisch.
+
+TD-Learning aktualisiert die Q-Werte nach JEDEM Schritt, ohne das Ende der
+Episode abzuwarten:
+
+    Q(s, a) ← Q(s, a) + α · [R + γ · max_a' Q(s', a') - Q(s, a)]
+
+Die Terme im einzelnen:
+  Q(s, a)                 = aktueller Q-Wert (bisherige Schätzung)
+  α                        = Lernrate (wie stark wird aktualisiert)
+  R + γ · max_a' Q(s', a') = TD-Ziel (neue, bessere Schätzung basierend auf
+                              tatsächlichem Reward + zukünftiger Schätzung)
+  [TD-Ziel - Q(s, a)]     = TD-Fehler (Differenz zwischen Erwartung und
+                              tatsächlichem Ergebnis)
+
+Das TD-Ziel nutzt Bootstrap: Es verwendet die eigene aktuelle Schätzung Q(s', a')
+um eine Verbesserung der aktuellen Schätzung Q(s, a) zu berechnen. Das klingt
+zirkulär – und ist es teilweise – aber es konvergiert trotzdem zur richtigen
+Lösung.
+
+Pokemon-Beispiel für einen TD-Update:
+Die KI steht im Kampf und drückt 'a'. Sie bekommt +3.0 Reward (Schaden).
+  Vorherige Schätzung:  Q(Kampf, 'a') = 10.0
+  Neuer Zustand:        Gegner hat jetzt 5 HP, KI schätzt Q(Zustand5HP, 'a') = 8.0
+  TD-Ziel:              3.0 + 0.99 · 8.0 = 3.0 + 7.92 = 10.92
+  TD-Fehler:            10.92 - 10.0 = +0.92 (besser als erwartet!)
+  Update:               Q(Kampf, 'a') ← 10.0 + α · 0.92 = 10.0 + 0.046 = 10.046
+
+Der TD-Fehler hat eine wichtige Bedeutung in der Neurowissenschaft: Er
+entspricht dem Dopamin-Signal im Gehirn. Wenn etwas besser läuft als erwartet,
+steigt Dopamin (positiver TD-Fehler). Wenn es schlechter läuft, fällt es
+(negativer TD-Fehler). RL modelliert so tatsächlich biologisches Lernen.
+
+
+DIE GRENZEN VON TABELLARISCHEM Q-LEARNING
+───────────────────────────────────────────
+Klassisches Q-Learning speichert alle Q-Werte in einer Tabelle: eine Zeile pro
+(Zustand, Aktion)-Paar. Das funktioniert bei kleinen Problemen (z.B. einem
+4×4-Labyrinth mit 16 Zuständen und 4 Aktionen = 64 Einträge).
+
+Bei Pokemon Gold mit 84×84 Pixel Graustufen-Input gibt es theoretisch
+256^(84×84) ≈ 10^17000 mögliche Zustände. Das ist mehr als Atome im
+Universum. Eine Tabelle ist völlig unmöglich.
+
+Außerdem: Tabellarisches Q-Learning kann nicht generalisieren. Wenn die KI
+in einem bestimmten Gras-Tile gelernt hat 'a' zu drücken, "weiß" sie nicht
+automatisch, dass dasselbe in einem ähnlichen Gras-Tile auf einer anderen
+Route auch gilt – weil die Zustände als komplett unterschiedliche Tabellen-
+einträge behandelt werden.
+
+Die Lösung für beide Probleme: ein neuronales Netz als Funktionsapproximator,
+was zum Deep Q-Network führt.
+
+
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+REINFORCEMENT LEARNING WITH NEURAL NETWORKS AND DEEP Q-LEARNING
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+
+DEEP Q-NETWORK (DQN)
+──────────────────────
+Deep Q-Networks wurden 2013/2015 von DeepMind entwickelt (Mnih et al.) und
+waren ein historischer Durchbruch: Zum ersten Mal lernte ein KI-System direkt
+aus Pixeln, ohne handgefertigte Features, 49 Atari-Spiele auf Menschniveau zu
+spielen. DQN kombiniert Q-Learning mit tiefen neuronalen Netzen.
+
+Die zentrale Idee: Statt eine Tabelle für Q(s, a) zu verwenden, wird ein
+neuronales Netz Q(s, a; θ) trainiert (wobei θ die Netzgewichte sind). Das Netz
+nimmt den Zustand s als Input und gibt für alle möglichen Aktionen gleichzeitig
+Q-Werte aus.
+
+    Input: Spielbild (Pixel)  →  CNN  →  MLP  →  Output: Q-Werte für alle Aktionen
+
+Warum ein CNN? Bilder haben räumliche Struktur – benachbarte Pixel sind
+korreliert. Ein Convolutional Neural Network nutzt diese Struktur durch Filter
+die lokale Muster erkennen (Kanten, Formen, Texturen). Die ersten Layer
+erkennen einfache Muster ("hier ist eine Kante"), tiefere Layer komplexere
+("das ist ein Pokemon-Sprite").
+
+Das Netz im Projekt macht genau das:
+
+    CNN(screen 84×84) + MLP(ram_features 10) → Actor (wählt Aktion)
+                                              → Critic (schätzt Wert)
+
+Das CNN lernt Muster im Bild zu erkennen ("das ist ein Kampfbildschirm",
+"das ist Gras", "das ist eine Stadt"). Das MLP verarbeitet die RAM-Features
+(HP, Position, Level) die präzise Zahlen liefern wo das Bild zu unscharf wäre.
+
+WARUM DQN SCHWIERIG ZU TRAINIEREN IST
+Die Kombination von Q-Learning und neuronalen Netzen ist instabil. Zwei
+Hauptprobleme:
+
+  1. Korrelierte Samples: Aufeinanderfolgende Schritte im Spiel sind stark
+     korreliert (Schritt 100 und 101 sind fast identische Bilder). Das Netz
+     overfittet auf diese Sequenz und "vergisst" ältere Erlebnisse.
+     Lösung: Experience Replay (siehe unten).
+
+  2. Moving Targets: Das Trainingsziel R + γ · max Q(s', a') ändert sich
+     bei jedem Update, weil die Netzgewichte θ es berechnen. Das ist wie
+     auf ein sich bewegendes Ziel zu schießen – instabil.
+     Lösung: Target Network (separates Netz für die Zielberechnung).
+
+
+EXPERIENCE REPLAY
+──────────────────
+Experience Replay (Erfahrungswiedergabe) ist eine der wichtigsten Innovationen
+die DQN stabil gemacht haben. Die Idee ist einfach aber wirkungsvoll.
+
+Ohne Replay: Die KI lernt Schritte in Reihenfolge (1, 2, 3, 4...). Aufeinander-
+folgende Erlebnisse sind stark korreliert – in Schritt 100-200 läuft die KI
+auf Route 29, in Schritt 200-300 kämpft sie. Das Netz overfittet auf diese
+zeitliche Struktur und vergisst was es über andere Situationen gelernt hat.
+
+Mit Replay: Alle Erlebnisse (s, a, r, s') werden in einem Replay Buffer
+(Ringpuffer) gespeichert. Zum Lernen werden zufällige Mini-Batches daraus
+gezogen. Dadurch:
+  • Aufbrechung von zeitlichen Korrelationen (zufällige Samples)
+  • Jedes Erlebnis kann mehrfach genutzt werden (Sample Efficiency)
+  • Seltene aber wichtige Ereignisse (Pokemon fangen) bleiben lange im Buffer
+
+Stable-Baselines3 implementiert dies automatisch. In unserem Projekt:
+  N_STEPS = 4096: Sammle 4096 Schritte pro Umgebung, dann lerne.
+  BATCH_SIZE = 512: Lerne aus zufälligen 512-Schritt-Batches.
+  16 parallele Envs: 16 × 4096 = 65.536 Erlebnisse pro Update-Zyklus.
+
+PPO verwendet eine Variante des Experience Replay: Es speichert Erlebnisse
+nur für den aktuellen Update-Zyklus (On-Policy) und verwirft sie danach.
+Das ist anders als DQN das Off-Policy lernt (Erlebnisse einer alten Policy
+für eine neue verwenden).
+
+
+DOUBLE Q-LEARNING
+──────────────────
+Standard Q-Learning hat ein systematisches Problem: Es überschätzt Q-Werte.
+Das passiert weil in der Update-Regel max_a' Q(s', a') verwendet wird.
+Wenn ein Q-Wert durch Zufall leicht zu hoch geschätzt wird, wird er öfter
+gewählt – und dadurch weiter überschätzt. Positive Fehler kumulieren sich.
+
+Das konkrete Problem:
+  Normales Q-Learning verwendet dasselbe Netz um:
+    a) die beste Aktion zu wählen: argmax_a' Q(s', a'; θ)
+    b) den Wert dieser Aktion zu schätzen: Q(s', a*; θ)
+
+  Das führt zu Bias: wenn das Netz eine Aktion überschätzt, wird diese
+  sowohl öfter gewählt als auch höher bewertet.
+
+Lösung – zwei getrennte Netze:
+  1. Online-Netz (θ):        wählt die beste Aktion a* = argmax Q(s', a'; θ)
+  2. Target-Netz (θ⁻):       bewertet die Aktion: Q(s', a*; θ⁻)
+
+Das Target-Netz wird seltener aktualisiert (z.B. alle 1000 Schritte wird θ⁻ ← θ
+kopiert). Das entkoppelt Auswahl und Bewertung und reduziert Überschätzung.
+
+PPO löst dieses Problem durch den Actor-Critic-Ansatz anders: Der Actor
+(Auswahl) und Critic (Bewertung) sind zwar im selben Netz, aber durch die
+Advantage-Funktion getrennt. Double Q-Learning war aber ein wichtiger
+Vorläufer und wird in modernen DQN-Varianten (Rainbow) standardmäßig verwendet.
+
+
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+DELAYED SPARSE REWARDS AND HIERARCHICAL LEARNING
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+
+Das ist das Hauptproblem bei Pokemon!
+
+DELAYED SPARSE REWARDS
+───────────────────────
+Sparse Rewards (spärliche Belohnungen) sind das vielleicht schwierigste Problem
+in praktischen RL-Anwendungen. In vielen realen und simulierten Umgebungen gibt
+es Belohnungen nur selten und mit großem zeitlichem Abstand zur verursachenden
+Aktion.
+
+Das fundamentale Problem: Mit welcher früheren Aktion ist der späte Reward
+verbunden? Dieses Problem heißt Credit Assignment Problem (Zuordnungsproblem).
+
+Pokemon fangen dauert hunderte Schritte. Die KI muss:
+  1. Ins Gras laufen    (~20 Schritte)
+  2. Kampf starten      (zufällig)
+  3. Gegner schwächen   (~5 Schritte)
+  4. Ball werfen        (~3 Schritte)
+  5. ERST JETZT: +25 Reward
+
+Mit ~300 Schritten Abstand zwischen Aktion und Belohnung ist es extrem
+schwer zu lernen welche der frühen Aktionen die Belohnung verursacht hat.
+
+Stell dir vor: Du spielst Schach und bekommst erst nach 40 Zügen das Feedback
+"du hast verloren". Welcher der 40 Züge war der entscheidende Fehler? Das Credit
+Assignment Problem ist dasselbe – und je größer der zeitliche Abstand, desto
+schwieriger.
+
+GAMMA ist der mathematische Mechanismus für Credit Assignment: Ein Reward in
+300 Schritten wird mit γ³⁰⁰ = 0.99³⁰⁰ ≈ 0.05 gewichtet – er ist noch zu 5%
+relevant. Das bedeutet: der Wert des Gras-Tiles (Schritt 1) enthält zu 5%
+den Pokemon-Fang-Reward (Schritt 300) – genug um die Richtung zu lernen,
+aber schwach.
+
+Lösungen die im Projekt eingesetzt wurden:
+  • Dense Rewards einführen: +0.02 pro neue Kachel, +0.1 Catchable Zone
+    → kürzere Abstände zum Feedback, Credit Assignment einfacher
+  • Curriculum Learning (Save States): KI startet näher am Ziel
+  • N_STEPS_WITHOUT_REWARD = 400: Episoden enden bei zu langem Stillstand
+
+
+HIERARCHICAL LEARNING
+──────────────────────
+Hierarchical Reinforcement Learning (HRL) ist ein Ansatz um das Problem der
+langen Planungshorizonte zu lösen. Statt alles auf einer Ebene zu lernen,
+werden Ziele in einer Hierarchie organisiert:
+
+  High-Level Policy: setzt Zwischenziele ("geh ins Gras", "geh zur Route 30")
+  Low-Level Policy:  führt primitive Aktionen aus um Zwischenziel zu erreichen
+                     ("drücke up, up, right, right...")
+
+Der Vorteil: Der High-Level-Agent muss nicht über hunderte primitiver Schritte
+hinweg planen. Er plant über Zwischenziele. Die Low-Level-Policies müssen nur
+lokale, kurzfristige Probleme lösen.
+
+Im Projekt nicht explizit implementiert, aber die Save States auf Route 30 sind
+eine manuelle Form davon – die KI wird direkt in schwierigere Situationen
+gesetzt ohne den gesamten Weg dorthin lernen zu müssen. Das entspricht dem
+High-Level-Plan "starte auf Route 30" ohne dass die KI den Weg dorthin selbst
+finden muss.
+
+Ein bekanntes HRL-Beispiel: Ein Roboter der lernen soll, eine Tür zu öffnen,
+zu gehen und ein Objekt zu greifen. High-Level: "geh zur Tür, dann öffne sie,
+dann geh zum Objekt". Low-Level: "bewege Gelenk X um Y Grad".
+
+
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+VALUE- VS. POLICY-BASED LEARNING
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+
+Es gibt zwei grundlegend verschiedene Ansätze um eine Policy zu lernen:
+wertbasiert (implizit über Q-Werte) oder direkt policy-basiert.
+
+
+VALUE-BASED (z.B. DQN, Q-Learning)
+─────────────────────────────────────
+Beim wertbasierten Ansatz lernt der Agent eine Wertfunktion Q(s, a) oder V(s).
+Die Policy wird daraus implizit abgeleitet: wähle immer die Aktion mit dem
+höchsten Q-Wert.
+
+    Policy:  π(s) = argmax_a Q(s, a)
+
+  + Vorteile:
+    - Stabile, gut verstandene mathematische Grundlage
+    - Gut erforscht, viele Varianten (DQN, Double DQN, Dueling DQN, etc.)
+    - Funktioniert gut bei diskreten Aktionsräumen (wie unsere 6 Tasten)
+
+  - Nachteile:
+    - Deterministisch: wählt immer dieselbe Aktion für denselben Zustand
+      (kein inhärentes Exploration-Verhalten)
+    - Funktioniert schlecht bei kontinuierlichen Aktionsräumen (z.B. Roboter
+      dessen Gelenke beliebige Winkel annehmen können)
+    - Muss für jede Aktion separat Q-Werte schätzen
+
+
+POLICY-BASED (z.B. REINFORCE, Policy Gradient)
+────────────────────────────────────────────────
+Beim policy-basierten Ansatz parametrisiert man die Policy direkt durch ein
+neuronales Netz π(a|s; θ) und optimiert die Netzgewichte θ direkt.
+
+Das Netz gibt für jeden Zustand eine Wahrscheinlichkeitsverteilung über Aktionen
+aus. Der einfachste Policy-Gradient-Algorithmus ist REINFORCE:
+  1. Spiele eine komplette Episode mit der aktuellen Policy
+  2. Für Aktionen die zu hohem Return führten: erhöhe ihre Wahrscheinlichkeit
+  3. Für Aktionen die zu niedrigem Return führten: verringere sie
+
+    ∇θ J(θ) = Σ G · ∇θ log π(a|s; θ)
+
+  + Vorteile:
+    - Direkt: optimiert was wir wollen (Policy-Güte)
+    - Funktioniert bei kontinuierlichen Aktionsräumen
+    - Kann stochastische Policies lernen (nützlich für Exploration)
+
+  - Nachteile:
+    - Hohe Varianz: ein einzelner schlechter Lauf kann die Policy stark
+      verschlechtern (weil die ganze Episode für das Update verwendet wird)
+    - Langsam konvergierend, instabiles Training
+    - Braucht viele Samples
+
+Das verwendete PPO ist keines von beiden allein – es ist Actor-Critic,
+das Beste aus beiden Welten.
+
+
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+ACTOR-CRITIC LEARNING
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+
+Das ist genau was PPO implementiert – der verwendete Algorithmus!
+
+DIE GRUNDIDEE: ZWEI ROLLEN IM SELBEN NETZ
+───────────────────────────────────────────
+Actor-Critic (AC) kombiniert value-basiertes und policy-basiertes Lernen.
+Es gibt zwei Komponenten (die im selben Netz realisiert werden können):
+
+    Actor  → die Policy π(a|s): wählt welche Aktion ausgeführt wird
+    Critic → die Wertfunktion V(s): schätzt wie gut der aktuelle Zustand ist
+
+Metapher: Stell dir einen Schauspielstudenten (Actor) und einen erfahrenen
+Regisseur (Critic) vor. Der Schauspieler führt Aktionen aus, der Regisseur
+beobachtet und gibt Feedback: "Das war besser/schlechter als ich erwartet hatte."
+Der Schauspieler verbessert sich basierend auf diesem Feedback.
+
+Im Netz des Projekts:
+  • Der Actor  sieht Bild + RAM → gibt Wahrscheinlichkeit für jede der
+                                   6 Tasten aus (stochastische Policy)
+  • Der Critic sieht dieselben Inputs → gibt einen Zahlenwert aus
+                                        ("dieser Zustand ist ~450 wert")
+
+Beide teilen sich die gleichen unteren Schichten (CNN + Feature Extractor)
+und haben nur am Ende getrennte Output-Köpfe. Das ist rechnerisch effizient
+und ermöglicht dass der Actor implizit vom Verständnis des Critics profitiert.
+
+
+DIE ADVANTAGE-FUNKTION: DAS HERZSTÜCK VON PPO
+───────────────────────────────────────────────
+Der Critic ermöglicht eine drastisch bessere Lernqualität durch die
+Advantage-Funktion A(s, a):
+
+    A(s, a) = Q(s, a) - V(s)
+
+Die Advantage misst: "Wie viel besser ist Aktion a im Vergleich zur
+durchschnittlich erwarteten Belohnung in diesem Zustand?"
+
+  A(s, a) > 0:  Diese Aktion war besser als der Durchschnitt → öfter tun
+  A(s, a) < 0:  Diese Aktion war schlechter als der Durchschnitt → seltener
+  A(s, a) = 0:  Durchschnittliche Aktion, kein Update nötig
+
+Der Critic hilft dem Actor stabiler zu lernen: Statt dem Actor zu sagen "du
+hast +3.0 Reward bekommen, das ist gut" sagt er "du hast +3.0 bekommen, aber
+ich hatte +5.0 erwartet – das war eigentlich schlechter als erwartet, lerne
+diese Aktion seltener zu wählen."
+
+Pokemon-Beispiel:
+  Situation: KI kämpft gegen schwaches Rattata, Totodile hat volle HP.
+  Erwartung des Critics: V(dieser Zustand) = +8.0  (hoher Wert, Sieg wahrscheinlich)
+  Tatsächlicher Reward:  R = +3.0 (Schaden), danach V(neuer Zustand) = +6.0
+  Return: 3.0 + 0.99 · 6.0 = 8.94
+  Advantage: 8.94 - 8.0 = +0.94
+
+  Die Aktion "Angriff wählen" war leicht besser als erwartet → leicht
+  erhöhte Wahrscheinlichkeit im nächsten Update.
+
+Die Advantage-Funktion reduziert Varianz drastisch gegenüber reinen Policy-
+Gradient-Methoden: Nicht der rohe Return G wird verwendet (der stark variiert),
+sondern die Advantage die misst wie viel besser eine Aktion relativ zur
+Baseline (dem Critic) war.
+
+
+PROXIMAL POLICY OPTIMIZATION (PPO)
+────────────────────────────────────
+PPO (Schulman et al., 2017) ist die konkrete Implementierung die im Projekt
+verwendet wird und einer der meistgenutzten RL-Algorithmen überhaupt. Der
+Algorithmus löst ein fundamentales Problem des Actor-Critics: zu große
+Policy-Updates.
+
+DAS PROBLEM MIT GROSSEN UPDATES:
+Wenn die Policy in einem Schritt zu stark verändert wird, kann das gelernte
+Wissen schlagartig zerstört werden. Stell dir vor, die KI hat gelernt im
+Kampf 'a' zu drücken (Angriff). Ein Update mit zu hoher Lernrate könnte
+diese Zuordnung auf einmal überschreiben und die KI muss von vorne lernen.
+
+Das nennt sich Catastrophic Forgetting (katastrophales Vergessen) und ist
+ein allgemeines Problem bei neuronalen Netzen.
+
+DIE PPO-LÖSUNG: DER CLIPPED OBJECTIVE
+PPO begrenzt wie weit sich die neue Policy von der alten entfernen darf:
+
+    L_CLIP(θ) = E[ min( r(θ) · A,  clip(r(θ), 1-ε, 1+ε) · A ) ]
+
+Dabei ist r(θ) das Verhältnis der neuen Policy zur alten:
+    r(θ) = π_neu(a|s; θ) / π_alt(a|s; θ)
+
+Was CLIP_RANGE = 0.2 bedeutet:
+  r(θ) wird auf [0.8, 1.2] beschnitten (clipped)
+  Die neue Policy darf höchstens 20% mehr oder weniger Wahrscheinlichkeit
+  einer Aktion zuweisen als die alte.
+
+Das verhindert:
+  - Zu große Updates die gelerntes Wissen zerstören (Catastrophic Forgetting)
+  - Instabiles Training durch übermäßig große Gradientenschritte
+  - Exploitation von schätzungsfehlern in der Advantage-Funktion
+
+Im Projekt: CLIP_RANGE = 0.2 ist der Standardwert und gut für die meisten
+Aufgaben. LEARNING_RATE = 7e-5 steuert zusätzlich die Schrittgröße.
+
+PPO IST "ON-POLICY"
+PPO ist ein On-Policy-Algorithmus: Es lernt nur aus Erfahrungen die mit der
+aktuellen Policy gesammelt wurden. Nach jedem Update-Zyklus werden die alten
+Erfahrungen verworfen und neue mit der aktualisierten Policy gesammelt.
+
+Das Gegenteil ist Off-Policy (wie DQN): dort können Erfahrungen einer alten
+Policy wiederverwendet werden. Off-Policy ist sample-effizienter (braucht
+weniger echte Spielschritte), aber schwieriger zu stabilisieren.
+
+N_STEPS = 4096 × 16 Envs = 65.536 Spielschritte werden gesammelt, dann
+N_EPOCHS = 4 mal über diese Daten gelernt, dann verworfen und neu gesammelt.
+
+
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+REINFORCEMENT LEARNING APPROACHES
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+
+MODEL-FREE LEARNING
+────────────────────
+Model-Free Learning bedeutet, dass der Agent kein explizites Modell der Umgebung
+lernt oder nutzt. Er lernt direkt aus der Erfahrung: "Ich habe Aktion a in
+Zustand s gemacht und Reward r bekommen" – ohne zu verstehen WARUM.
+
+Das Projekt nutzt ausschließlich Model-Free Learning: Die KI lernt direkt aus
+Erfahrung ohne zu wissen wie die Welt funktioniert.
+
+Sie weiß nicht:
+  • Was passiert wenn sie "up" drückt
+  • Wie viele Schritte bis zum nächsten Kampf
+  • Wie das Schadenssystem von Pokemon Gold intern funktioniert
+  • Welche Route 30 existiert oder wo sie liegt
+  • Was ein "Pokemon" überhaupt ist
+
+Sie lernt alles durch Trial-and-Error mit dem echten Emulator. Der Emulator
+ist eine vollständige Blackbox.
+
+WARUM MODEL-FREE DOMINIERT
+In der Praxis ist Model-Free Learning der häufigere Ansatz, aus mehreren Gründen:
+
+  1. Einfachheit: Es ist viel einfacher zu implementieren als ein akkurates
+     Weltmodell zu lernen. Kein zusätzliches Modell-Training nötig.
+
+  2. Fehlerfreiheit: Ein gelerntes Weltmodell macht immer Fehler.
+     Bei Model-Free-Verfahren gibt es kein fehlerhaftes Zwischenmodell das
+     den Agenten in die Irre führen kann.
+
+  3. Anwendbarkeit: Für sehr komplexe Umgebungen (wie Pokemon Gold mit
+     kompletter Spielengine) wäre ein akkurates Weltmodell nicht lernbar.
+
+Der Hauptnachteil ist Sample Inefficiency: Model-Free-Algorithmen brauchen
+viele Millionen echte Schritte (echte Emulator-Ausführungen). Im Projekt
+werden für ein gutes Ergebnis 5-20 Millionen Schritte benötigt. Ein Mensch
+würde dieselbe Aufgabe nach vielleicht 100.000 Schritten (einem Nachmittag
+spielen) beherrschen.
+
+Zur Rechenzeit: Das i9 mit 16 parallelen Envs schafft etwa 500-1000 Schritte
+pro Sekunde. 5 Millionen Schritte ≈ 1-3 Stunden Training.
+
+
+MODEL-BASED LEARNING
+─────────────────────
+Model-Based Learning ergänzt den Agenten um ein gelerntes Weltmodell. Das
+Modell lernt die Übergangsfunktion P(s'|s, a) und die Reward-Funktion R(s, a).
+Mit diesem Modell kann der Agent "im Kopf" planen ohne die Umgebung wirklich
+auszuführen.
+
+    KI denkt: "Wenn ich 'up' drücke, lande ich wahrscheinlich auf einem
+    Gras-Tile, dann mit 10% Chance startet ein Kampf, der Gegner hat
+    wahrscheinlich ~10 HP..."
+
+  + Vorteile:
+    - Viel effizienter: braucht weniger echte Schritte, mehr "Fantasie-Schritte"
+    - Kann vorab planen ohne das Risiko echter Fehler
+    - Nützlich wenn echte Interaktionen teuer sind (Roboter, medizinische KI)
+
+  - Nachteile:
+    - Das Modell ist nie perfekt. Kleine Fehler kumulieren sich bei langen
+      Planungshorizonten (sogenannter "compounding error")
+    - Aufwändige Implementierung: zwei Lernprobleme statt einem
+    - Schwer für komplexe, chaotische Umgebungen
+
+Für Pokemon Gold wäre das extrem schwer zu implementieren: Das Spiel hat
+komplexe Zustandsübergänge (Kämpfe, zufällige Begegnungen, Dialoge...) die
+ein Modell nicht perfekt vorhersagen kann.
+
+Bekannte Model-Based-Ansätze: AlphaZero/AlphaGo (lernt ein Modell von Schach/
+Go und plant mit Monte Carlo Tree Search), Dreamer/World Models (lernt eine
+komprimierte Weltrepräsentation als latentes Modell).
+
+
+EXPLORATION VS. EXPLOITATION
+──────────────────────────────
+Das ist die zentrale Spannung im gesamten Training und eines der
+fundamentalsten Probleme in der Entscheidungstheorie.
+
+  Exploitation: tue was du weißt (geh wieder nach Route 29, XP farmen)
+                → nutzt bekanntes Wissen, aber verpasst potenziell bessere
+                   unbekannte Strategien
+  Exploration:  probiere etwas Neues (lauf weiter nach Route 30)
+                → findet neue Möglichkeiten, aber riskiert kurzfristig
+                   schlechtere Performance
+
+Das Dilemma: Zu frühe Exploitation führt zu suboptimalen Policies (lokale
+Optima). Zu viel Exploration führt dazu, dass die KI nie konvergiert und
+ständig schlechte Aktionen ausprobiert.
+
+Im Laufe des Trainings verschiebt sich das Verhältnis typischerweise:
+  Früh: viel Exploration (KI weiß wenig, muss entdecken)
+  Später: mehr Exploitation (KI hat gelernt was gut funktioniert)
+
+Direkt gesteuert über:
+  • ENT_COEF = 0.05 → viel Exploration (KI läuft öfter zufällig →
+                       findet neue Gebiete)
+  • ENT_COEF = 0.02 → mehr Exploitation (KI nutzt was sie weiß →
+                       stabiles Training)
+
+Der Entropie-Bonus im PPO-Objective belohnt die KI dafür, dass sie eine
+breite Wahrscheinlichkeitsverteilung über Aktionen beibehält. Eine Policy
+die immer dieselbe Aktion mit 99% Wahrscheinlichkeit wählt hat niedrige
+Entropie – der Bonus ist gering. Eine Policy die gleichmäßig alle 6 Tasten
+mit je ~17% wählt hat maximale Entropie – der Bonus ist hoch.
+
+Mathematisch: Entropie H(π) = -Σ π(a|s) · log π(a|s)
+
+Klassische Probleme:
+  • Zu viel Exploitation → KI bleibt auf Route 29 hängen (lokales Optimum)
+  • Zu viel Exploration  → KI lernt nichts weil zu chaotisch
+
+Die Lösung mit den Save States ist eine Form von erzwungener Exploration:
+die KI wird direkt in neue Gebiete gesetzt, damit sie dort ohne lange
+Exploration-Phase lernen kann. Das heißt Curriculum Learning.
+
+ON-POLICY VS. OFF-POLICY EXPLORATION
+  On-Policy (PPO): Die Exploration-Aktionen der aktuellen Policy werden
+  direkt für das Training genutzt. Exploration-Strategien sind in die
+  Policy integriert (via Entropie-Bonus).
+
+  Off-Policy (DQN): Exploration geschieht getrennt von der gelernten
+  Policy (z.B. ε-greedy). Die Policy selbst kann deterministisch sein,
+  während ε-greedy gelegentlich zufällige Aktionen einfügt.
+
+
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+SCHNELLE REFERENZ: KONZEPT → POKEMON-PROJEKT
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+
+  Konzept                │ Im Projekt
+  ───────────────────────┼──────────────────────────────────────────────────
+  MDP                    │ PokemonGoldEnv (State, Action, Reward, Transition)
+  Bellman Equation       │ Critic schätzt V(s), GAMMA = 0.99
+  Bellman Optimality     │ PPO optimiert V*(s) approximativ
+  TD-Fehler              │ Advantage = Return - V(s), pro Step berechnet
+  Utility Function       │ _calculate_reward() in pokemon_env.py
+  Sparse Rewards         │ +25 Pokemon fangen, +5 neue Karte
+  Dense Rewards          │ +0.02 neue Kachel, +0.1 Catchable Zone
+  Reward Hacking         │ +17 Gratis-Reset-Bug, XP-Mismatch, KI dreht Kreise
+  Credit Assignment      │ Problem: 300 Schritte bis zum Fang-Reward
+  Discount-Faktor γ      │ GAMMA = 0.99, KI denkt ~100 Schritte voraus
+  Experience Replay      │ N_STEPS=4096, BATCH_SIZE=512, 16 envs
+  DQN                    │ Vorläufer von PPO, CNN für Pixel-Input
+  Actor-Critic           │ PPO – Actor wählt Taste, Critic bewertet Zustand
+  Advantage              │ Tatsächlicher Return - erwarteter V(s)
+  Proximal (PPO)         │ CLIP_RANGE = 0.2 verhindert zu große Updates
+  Catastrophic Forgetting│ Verhindert durch CLIP_RANGE und niedrige LR
+  Entropie-Bonus         │ ENT_COEF steuert Zufälligkeit der Aktionen
+  Exploration            │ ENT_COEF = 0.02-0.05, Save States
+  Exploitation           │ KI nutzt bekannte gute Strategien (greedy)
+  On-Policy              │ PPO lernt nur aus aktuellen Erfahrungen
+  Curriculum Learning    │ 5 Save States an verschiedenen Startpunkten
+  Model-Free             │ Kein internes Weltmodell – echter PyBoy-Emulator
+  Model-Based            │ Nicht verwendet; zu komplex für Pokemon Gold
+  Hierarchical Learning  │ Save States als manuelle Zwischenziele
+  Markov-Eigenschaft     │ Aktueller Zustand reicht – keine Spielhistorie nötig
+
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━

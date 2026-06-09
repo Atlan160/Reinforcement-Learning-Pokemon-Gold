@@ -1,0 +1,28 @@
+# ─── Python ────────────────────────────────────────────────
+__pycache__/
+*.py[cod]
+*.egg-info/
+.venv/
+venv/
+
+# ─── Pokémon ROM (urheberrechtlich geschützt – NIEMALS commiten) ─
+*.gbc
+*.gb
+*.gbc.ram
+*.gbc.rtc
+
+# ─── Save States (binär, abgeleitet) ───────────────────────
+*.state
+Savestates/
+
+# ─── Trainings-Artefakte (groß) ────────────────────────────
+models/
+checkpoints/
+tensorboard_logs/
+videos/
+
+# ─── OS / Editor ───────────────────────────────────────────
+.DS_Store
+Thumbs.db
+.idea/
+.vscode/

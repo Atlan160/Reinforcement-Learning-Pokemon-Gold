@@ -1,0 +1,47 @@
+# ──────────────────────────────────────────────────────────────
+#  POKEMON GOLD RL – Python-Abhängigkeiten
+# ──────────────────────────────────────────────────────────────
+#
+# Installation:
+#   pip install -r requirements.txt
+#
+# Empfehlung: Virtuelle Umgebung nutzen!
+#   python -m venv venv
+#   venv\Scripts\activate         # Windows
+#   source venv/bin/activate      # Linux / macOS
+#   pip install -r requirements.txt
+#
+# GPU-Training (optional, deutlich schneller):
+#   pip install torch --index-url https://download.pytorch.org/whl/cu121
+#   (ersetze cu121 durch deine CUDA-Version)
+# ──────────────────────────────────────────────────────────────
+
+# PyBoy: GameBoy / GameBoy Color Emulator für Python
+# Läuft Pokemon Gold als Python-Objekt, gibt RAM-Zugriff
+pyboy>=2.0.0
+
+# Gymnasium: Standard-Interface für RL-Umgebungen (Nachfolger von OpenAI Gym)
+gymnasium>=0.29.0
+
+# Stable-Baselines3: PPO-Implementierung mit MultiInputPolicy (CNN + MLP)
+stable-baselines3>=2.3.0
+
+# NumPy: Numerische Berechnungen, Arrays
+numpy>=1.24.0
+
+# PyTorch: Deep-Learning-Framework (wird von SB3 intern genutzt)
+# RTX 4070 → CUDA-Version installieren (viel schneller als CPU!):
+#   pip install torch --index-url https://download.pytorch.org/whl/cu124
+# CUDA-Version prüfen: nvidia-smi  (zeigt z.B. "CUDA Version: 12.4")
+torch>=2.0.0
+
+# OpenCV: Bildverarbeitung (Skalierung, Graustufen, Textüberlagerung)
+opencv-python>=4.8.0
+
+# TensorBoard: Trainingsvisualisierung
+# Starten: tensorboard --logdir ./tensorboard_logs
+tensorboard>=2.14.0
+
+# imageio + ffmpeg: Video-Export für record.py
+imageio>=2.31.0
+imageio-ffmpeg>=0.4.9
