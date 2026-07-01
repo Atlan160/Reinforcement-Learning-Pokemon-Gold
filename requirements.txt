@@ -1,0 +1,23 @@
+# Reinforcement Learning – Pokémon Gold
+# Kern-Abhängigkeiten, getestet mit Python 3.13 (Windows).
+# Installation:  pip install -r requirements.txt
+
+pyboy==2.7.0
+stable-baselines3==2.8.0
+gymnasium==1.2.3
+numpy==2.2.6
+opencv-python==4.13.0.92
+tensorboard==2.21.0
+
+# ── PyTorch ───────────────────────────────────────────────────────────
+# Der Autor nutzt den CUDA-11.8-Build (torch==2.7.1+cu118).
+# GPU (CUDA 11.8) – separat vom PyTorch-Index installieren:
+#     pip install torch==2.7.1 --index-url https://download.pytorch.org/whl/cu118
+# Zum Ausprobieren genügt der Standard-Build (CPU / Default-CUDA):
+torch==2.7.1
+
+# ── Optional ──────────────────────────────────────────────────────────
+# Nur für erweiterte TensorBoard-Plugins nötig, NICHT fürs Training (das läuft
+# über PyTorch). WICHTIG: gleiche Minor-Version wie tensorboard halten (2.21),
+# sonst crasht der TensorBoard-Viewer (protobuf-Konflikt).
+# tensorflow==2.21.0
