@@ -138,7 +138,9 @@ MILESTONE_BONUS = {
     #(3, 1):  10.0,   # Knofensa-Turm Basis betreten (Optional vor der Arena)
     #(3, 2):  10.0,   # Knofensa-Turm 1. Stock – ansteigend, zieht nach oben (statt nur rein/raus)
     #(3, 3):  10.0,   # Knofensa-Turm 2. Stock (oben) – höchste Turm-Belohnung
-    (10, 7): 20.0,    # Violet-Arena (Falkner) betreten
+    (10, 7): 30.0,    # Violet-Arena (Falkner) betreten – wird mit dem KAMPF-ZUSTAND
+                      # skaliert (HP/PP-Score × ARENA_READY_FLOOR-Formel, s. BEISPIEL 3):
+                      # geheilt = volle 30, angeschlagen = bis runter auf 7.5
     (3 ,29): 20,      # Union Cave
     (8, 7): 20.0      # Azaelea City
 }
@@ -177,6 +179,25 @@ FLEE_STUCK_BONUS   = 0.7
 EGG_REWARD         = 150
 PC_ENTRY_REWARD    = 30      # erstes Betreten des Violet-Pokécenters (10,10) pro Episode
                              # → zieht die KI in den Ei-„Entdeckungsraum" (NPC sitzt dort)
+
+# ── EI-ABHOL-PHASE (Orden JA, Ei NEIN) ────────────────────────────────────
+# Nach dem 1. Orden ist das nächste Spielziel das Togepi-Ei im Violet-PC
+# (Route 32 ist ohne Ei ohnehin ge-gated). In dieser Phase wird die Navigation
+# UMGESCHALTET: Routen-Gain pausiert, stattdessen zieht ein eigener Gain zum
+# Pokécenter (egg_nav_progress, BEISPIEL 2b) + frischer PC-Meilenstein; die
+# Arena wird zur Trap-Map. Mit dem Ei (Ei-LINIE: Ei ODER Togepi) endet die
+# Phase DAUERHAFT → der normale Routen-Gain übernimmt wieder.
+EGG_NAV_REWARD     = 2.0     # pro Kachel Annäherung an den PC (Skala wie PROGRESS_REWARD)
+EGG_PC_MILESTONE   = 10.0    # erstes PC-Betreten WÄHREND der Phase (eigener Flag, s. Beispiel-Block)
+
+# ── Arena-Meilenstein × Kampf-Zustand (Anti-„angeschlagen-in-den-Boss") ────
+# Der Arena-Milestone (10,7) wird mit dem Zustand beim BETRETEN skaliert:
+#   score  = 0.5·HP-Ratio (Mon 1) + 0.5·PP-Ratio   → genau das, was das PC auffüllt
+#   faktor = FLOOR + (1-FLOOR)·score               → nie unter FLOOR (Sog bleibt!)
+# Geheilt ankommen zahlt den vollen Milestone, angeschlagen nur den Floor-Anteil
+# → belohnt die Sequenz „erst PC, dann Arena" (Win-Rate-Hebel), ohne den
+# Arena-Besuch je unattraktiv zu machen. Gewichte 0.5/0.5 bei Bedarf anpassen.
+ARENA_READY_FLOOR  = 0.25    # Mindest-Anteil des Arena-Milestones (0.25 → 7.5 von 30)
 
 # Routen-Reihenfolge (Haupt-Progression) für den Backward-Reward-Fix: beim Start aus
 # einem Savestate werden alle Karten VOR dem Startpunkt als "schon entdeckt" vor-
@@ -272,15 +293,42 @@ def route_progress(map_key, gx, gy):
         # Süden voll. (Warp braucht KEINE 0-Naht – die Re-Baseline übernimmt.)
         return 116.0 + gy
     if map_key == (8, 6):      # Route 33 (Leg 5): hier dreht die Route auf WESTEN
-        # Höhlenausgang (-74,26) = Union-Cave-Progress 135.2. Ab hier zählt WESTEN
-        # (gx sinkt). 61.2 - gx hält den Ausgang stetig (0-Sprung) und wächst nach West.
-        return 61.2 - gx
+        # Höhlenausgang (-74,26) = Union-Cave-Progress 142.0 (= 116+26, seit dem
+        # Dead-Zone-Fix 109.2→116). 68.0 - gx hält den Ausgang stetig (0-Sprung)
+        # und wächst nach Westen. (War 61.2 = auf die ALTE Union-Konstante 109.2
+        # kalibriert → 6.8-Riss am Ausgang = Door-Farm-Risiko. Nachgezogen.)
+        return 68.0 - gx
     if map_key == (8, 7):      # Azalea City (Leg 6): West weiter (Eintritt von Osten)
-        # Naht Route33↔Azalea bei (-80,29) → 141.2; gleiche West-Formel = 0-Sprung.
-        # PROVISORISCH: reiner West-Gain (KI läuft von Ost nach West rein). Sobald die
-        # Bugsy-Arena lokalisiert ist, ggf. Nudge/Meilenstein dorthin ergänzen.
-        return 61.2 - gx
+        # Naht Route33↔Azalea bei (-80,29) → 148.0; gleiche West-Formel = 0-Sprung.
+        # (61.2→68.0 zusammen mit Route 33 angehoben, sonst wandert der Riss nur
+        # eine Naht weiter.) PROVISORISCH: reiner West-Gain (Eintritt von Osten).
+        # Sobald die Bugsy-Arena lokalisiert ist, ggf. Nudge/Meilenstein ergänzen.
+        return 68.0 - gx
     return None
+
+
+# ── Geometrie der EI-ABHOL-PHASE (Konstanten siehe Reward-Block oben) ──────
+EGG_NAV_MAP   = (10, 5)    # Zone: Violet City – Arena-Ausgang lokal (11,11) … PC
+EGG_PC_TARGET = (17, 14)   # Ziel: PC-Tür, LOKAL in Violet City (User-Walkthrough)
+
+
+def egg_nav_progress(map_key, x, y):
+    """
+    Fortschritts-Maß der EI-ABHOL-PHASE (Orden ja, Ei nein): Nähe zum Violet-
+    Pokécenter. Nur in Violet City (EGG_NAV_MAP) definiert und in LOKALEN
+    Koordinaten gerechnet – Start (Arena-Ausgang) und Ziel (PC) liegen auf
+    derselben Karte, ein Offset ist unnötig.
+
+    Skala: invertierte Manhattan-Distanz (+20), damit „näher = höher" – gleiche
+    Gain-Richtung wie route_progress, gleiche Frontier-Mechanik nutzbar.
+      Arena-Ausgang (11,11) → 11.0    PC-Tür (17,14) → 20.0
+    Pro Geh-Schritt ändert sich der Wert um genau ±1 → bleibt unter der
+    2.0-Stale-/2.1-Gain-Schwelle. None außerhalb der Zone (Innenräume, andere
+    Karten) → Tracking pausiert, exakt wie beim Haupt-System.
+    """
+    if map_key != EGG_NAV_MAP:
+        return None
+    return 20.0 - (abs(x - EGG_PC_TARGET[0]) + abs(y - EGG_PC_TARGET[1]))
 
 
 class PokemonGoldEnv(gym.Env):
@@ -660,6 +708,15 @@ class PokemonGoldEnv(gym.Env):
         self._prev_egg_state = read_has_egg(self.pyboy)
         self._pc_egg_entered = False   # erstes Betreten des Violet-PC (10,10) diese Episode?
 
+        # ── EI-ABHOL-PHASE: eigenes Gain-Tracking Richtung PC (BEISPIEL 2b) ──
+        # 1:1-Klon der bewährten _stable_prog-Mechanik, nur mit egg_nav_progress
+        # als Metrik. prev/stable None = noch keine Messung; die Basislinie setzt
+        # der erste STABILE Zonen-Kontakt (ohne Reward) – wie beim Haupt-System.
+        self._egg_nav_prev     = None
+        self._egg_nav_stable   = None
+        self._egg_nav_frontier = 0.0
+        self._pc_egg_phase_entered = False   # PC-Meilenstein der Phase schon kassiert?
+
         # ── CLEARED MAPS & VISITED MAPS vorinitialisieren ────────
         # Cleared maps: Route 29 + New Bark Town immer abgegrast (verifizierte IDs).
         # Visited maps: enthält von Anfang an ALLE cleared maps + die Startkarte.
@@ -695,7 +752,16 @@ class PokemonGoldEnv(gym.Env):
             (10, 12), (10, 16),                  # Torhäuser zu den Alph-Ruinen
             (3, 22), (3, 24), (3, 27), (3, 28),  # Alph-Ruinen-Innenräume
             (3, 1),                              #Knofensa Turm
+            (8,3),(8,2),                         #Pokemarkt Azaelea und Haus
+
         }
+        # EI-ABHOL-PHASE: Startet die Episode bereits MIT Orden (Gym_after_boss,
+        # PC_before_egg, Route-32-States, …), ist die Arena (10,7) von Beginn an
+        # Trap – nach dem Orden gibt es dort nichts mehr, der Sog muss RAUS zum
+        # PC zeigen. (Gewinnt die KI den Orden erst WÄHREND der Episode, passiert
+        # dasselbe live im Orden-Block von _calculate_reward.)
+        if self._prev_badges >= 1:
+            self._trap_maps.add((10, 7))
         self._cleared_maps  = {
             (24, 4),   # New Bark Town   ✓ verifiziert
             (24, 3),   # Route 29        ✓ verifiziert
@@ -948,6 +1014,13 @@ class PokemonGoldEnv(gym.Env):
         map_key                     = (map_group, map_number)
         self._maps_seen.add(map_key)   # ehrliche Zählung jeder tatsächlich betretenen Karte
 
+        # ── EI-ABHOL-PHASE? (Orden JA, Ei NEIN) ────────────────────────────
+        # In der Phase wird die Navigation umgeschaltet: Routen-Gain AUS (Beispiel 2),
+        # PC-Gain AN (Beispiel 2b), Arena = Trap, PC-Meilenstein scharf. has_egg ist
+        # die EI-LINIE (Ei ODER Togepi) und der Orden bleibt für immer → die Phase
+        # ist MONOTON (aus → an → für immer aus), kein Flip-Flop-Farm möglich.
+        egg_phase = badge_count >= 1 and not has_egg
+
         # Karten-IDs (debug_ram.py + Disassembly verifiziert):
         #   New Bark Town (24,4), Route 29 (24,3) → cleared (nur Vorbelegung in reset)
         #   Cherrygrove (26,3), Route 30 (26,1), Route 31 (26,2) → echte neue Karten
@@ -985,8 +1058,14 @@ class PokemonGoldEnv(gym.Env):
         #     Check nach der None-Lücke: fängt den Respawn auch bei Stale-Frames.)
         #   • Sonst kontinuierliche Vorwärtsbewegung (gain ≤2) → Reward, Frontier zieht mit.
         # Drinnen/ungemappt (prog None) → Tracking pausieren.
+        # In der EI-ABHOL-PHASE pausiert der Routen-Gain KOMPLETT (prog=None, wie in
+        # Innenräumen): der Violet-Leg zieht nach WESTEN, das PC liegt aber ÖSTLICH
+        # des Arena-Ausgangs – zwei gleichzeitige, gegenläufige Gains würden sich
+        # sabotieren. Beispiel 2b übernimmt; nach der Phase resumed dieses Tracking
+        # sauber über Stale-Filter + Re-Baseline (Wiedereinstieg zahlt nichts).
         cur_global = self._gct.to_global(map_group, map_number, x, y)
-        prog = route_progress(map_key, *cur_global) if cur_global is not None else None
+        prog = (route_progress(map_key, *cur_global)
+                if (cur_global is not None and not egg_phase) else None)
         if prog is None:
             self._prev_prog = None
         else:
@@ -1002,14 +1081,47 @@ class PokemonGoldEnv(gym.Env):
                 self._stable_prog = prog
             self._prev_prog = prog
 
+        # ── BEISPIEL 2b: EI-ABHOL-NAVIGATION (nur in der Phase Orden-ohne-Ei) ──
+        # Ersetzt in der Phase den Routen-Gain: zieht vom Arena-Ausgang (11,11) zum
+        # Pokécenter (17,15), beides lokal Violet City. EXAKT dieselbe bewährte
+        # Mechanik wie Beispiel 2 (Stale-Filter, >2-Re-Baseline OHNE Reward,
+        # gain≤2.1-Kappe): Tod→PC-Respawn zahlt nichts (Sprung >2 → Re-Baseline),
+        # PC-Tür rein/raus farmt nichts (Frontier bleibt), Zonen-Austritt pausiert.
+        egg_prog = egg_nav_progress(map_key, x, y) if egg_phase else None
+        if egg_prog is None:
+            self._egg_nav_prev = None
+        else:
+            if self._egg_nav_prev is not None and abs(egg_prog - self._egg_nav_prev) <= 2.0:
+                # zwei nahe Messungen in Folge → egg_prog ist VERTRAUENSWÜRDIG
+                if self._egg_nav_stable is None or abs(egg_prog - self._egg_nav_stable) > 2.0:
+                    self._egg_nav_frontier = egg_prog    # Teleport/erststabil → Basislinie, KEIN Reward
+                else:
+                    e_gain = egg_prog - self._egg_nav_frontier
+                    if 0.0 < e_gain <= 2.1:
+                        reward += e_gain * EGG_NAV_REWARD   # Annäherung an den PC → Reward
+                        self._egg_nav_frontier = egg_prog
+                self._egg_nav_stable = egg_prog
+            self._egg_nav_prev = egg_prog
+
         # ── BEISPIEL 3: NEUE KARTE BETRETEN ───────────────────────────────
         if map_key not in self._visited_maps:
             self._visited_maps.add(map_key)
             if map_key not in self._trap_maps:
                 # Echte neue Karte: einmaliger Entdeckungs-Bonus.
                 reward += NEW_MAP_REWARD
-                # Meilensteine (Turm/Arena): kräftiger Extra-Bonus obendrauf.
-                reward += MILESTONE_BONUS.get(map_key, 0.0)
+                # Meilensteine (Arena/Union Cave/…): kräftiger Extra-Bonus obendrauf.
+                milestone = MILESTONE_BONUS.get(map_key, 0.0)
+                if map_key == (10, 7) and milestone > 0.0:
+                    # Arena skaliert mit dem KAMPF-ZUSTAND beim Betreten (Konstanten-
+                    # Block: ARENA_READY_FLOOR). HP = Mon 1 (der Haupt-Kämpfer);
+                    # PP-Referenz = _max_pp_seen (dieselbe wie beim Heal-Reward).
+                    # Greift praktisch nur den badge=0-Erstanlauf: mit Orden ist die
+                    # Arena Trap bzw. via ROUTE_ORDER vor-markiert → kein Milestone.
+                    hp_ratio  = current_hp / max(max_hp, 1)
+                    pp_ratio  = min(1.0, current_pp / max(self._max_pp_seen, 1))
+                    score     = 0.5 * hp_ratio + 0.5 * pp_ratio
+                    milestone *= ARENA_READY_FLOOR + (1.0 - ARENA_READY_FLOOR) * score
+                reward += milestone
 
         # ── BEISPIEL 4: ABLENKUNGSGEBÄUDE (PERMANENTE STRAFE) ─────────────
         # Jeder Schritt IN einem Trap-Gebäude kostet TRAP_PENALTY.
@@ -1034,6 +1146,11 @@ class PokemonGoldEnv(gym.Env):
         new_badges = badge_count - self._prev_badges
         if new_badges > 0:
             reward += BADGE_REWARD * new_badges   # 1. Orden = das eigentliche Ziel in Violet
+            # Ab jetzt EI-ABHOL-PHASE: die Arena wird SOFORT zur Trap-Map – dort
+            # gibt es nichts mehr, die Schritt-Strafe drückt die KI raus Richtung
+            # PC. Dauerhaft (auch nach dem Ei); reset() setzt es für Orden-Starts.
+            self._trap_maps.add((10, 7))
+            self._cleared_maps.add((10, 7))
 
         # ── BEISPIEL 6: TEAM-POKEMON ERHALTEN ────────────────
         # Wenn die Anzahl der Team-Pokemon gestiegen ist (Starter bekommen,
@@ -1181,6 +1298,15 @@ class PokemonGoldEnv(gym.Env):
         if map_key == (10, 10) and not self._pc_egg_entered:
             self._pc_egg_entered = True
             reward += PC_ENTRY_REWARD
+
+        # PC-Meilenstein der EI-ABHOL-PHASE (+EGG_PC_MILESTONE): feuert auch, wenn
+        # das PC diese Episode schon VOR dem Orden besucht wurde (heilen) – der
+        # Anreiz „geh JETZT (wieder) zum PC" muss nach dem Orden FRISCH gesetzt
+        # werden. Eigener Flag statt MILESTONE_BONUS (Grund wie oben: ROUTE_ORDER
+        # würde (10,10) für Gym-/Route-32-Starts vor-markieren → nie feuern).
+        if egg_phase and map_key == (10, 10) and not self._pc_egg_phase_entered:
+            self._pc_egg_phase_entered = True
+            reward += EGG_PC_MILESTONE
         # ── BAG-/MENÜ-GEFLATTER BREMSEN ──────────────────────────────────
         # Ab 50 AUFEINANDERFOLGENDEN Schritten ohne Schaden -0.003/Schritt → zielloses
         # Scrollen im Beutel (z.B. nach leeren Pokébällen) wird teuer; die KI soll

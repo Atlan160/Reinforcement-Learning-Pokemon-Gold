@@ -1,6 +1,6 @@
 # Projekt-Protokoll — Reinforcement Learning Pokémon Gold
 
-**Stand:** 2026-06-24
+**Stand:** 2026-07-02
 **Umfang:** Zusammenfassung der Änderungen, Entscheidungen und Diagnosen aus einer längeren Arbeitssitzung.
 **Ziel des Projekts:** PPO-Agent (stable-baselines3, PyBoy) spielt deutsches Pokémon Gold (`PGV.gbc`):
 New Bark Town → Route 29 → Cherrygrove → Route 30/31 → Violet City → Falkner-Arena (1. Orden) → Route 32 → Union Cave → Route 33 → Azalea.
@@ -316,12 +316,61 @@ Das Togepi-Ei aus dem Violet-Pokécenter ist ein echtes **Spiel-Gate**: ohne Ei 
 - **Nur die Basis `(3,1)` nötig:** Die KI muss durch die Basis, um zu den Etagen `(3,2)/(3,3)` zu kommen; die Basis-Strafe hält sie vom ganzen Turm ab. (Der `GRIND_SATURATION_PER_MAP`-Eintrag `(3,1):300` ist damit gegenstandslos — der Turm ist ohnehin `cleared` —, schadet aber nicht.)
 - **Code-Kommentare nachgezogen:** die zwei nun widersprüchlichen Kommentare bei `_trap_maps` („Turm … bewusst NICHT dabei" / „bleibt Meilenstein, kein Trap!") wurden korrigiert.
 
+## U. Reward-Hack „Door-Farm 2.0" in Violet + Naht-Nachzieher (Route 33 / Azalea)
+
+**Symptom (User-Fund):** Die KI pendelt Violet ↔ Torhaus ↔ Route 31; die angezeigte Distanz springt 7 ↔ 79.
+**Ursache:** Beim Entfernen des Nord-Terms aus dem Violet-Leg (`(46-gy)+0.6·(-58-gx)` → `-58-gx`) ging nicht nur die Richtung, sondern das **Niveau** verloren (Torhaus: 0 statt 79). Jeder Torhaus-Übergang sprang damit >2 → die **Tod-Re-Baseline feuerte fälschlich** bei jedem normalen Durchgang → die Frontier wurde über die Diskontinuität hinweg resettet → **dieselbe Strecke war jede Runde neu kassierbar** (der Door-Farm aus E.1, wiedergeboren).
+
+**Lehre (wichtigste dieser Iteration):** Eine Leg-Formel ist zugleich **Richtungs-Signal UND Kontinuitäts-Anker**. Beim Editieren eines Legs muss sein Wert an **jeder Naht ≤2** vom Nachbar-Leg bleiben, sonst macht die Re-Baseline aus jedem Übergang einen Farm.
+
+**Fixes:**
+- **Violet:** West-only, aber an BEIDE Nähte kalibriert: `63.5 − 0.267·gx` (Torhaus 79.0, Route-32-Naht 82.2 — Sprünge 0.01). Kein Nord-Reward, kein Farm.
+- **Naht-Sweep** (neues Standard-Werkzeug): alle 9 Übergänge numerisch geprüft. Dabei **zweiten Riss gefunden**: Union-Cave-Ausgang → Route 33 sprang 6.8 — der Dead-Zone-Fix (109.2→116, E.3) war nie in die Route-33-Konstante nachgezogen worden. Fix: `61.2 → 68.0` für Route 33 **und** Azalea (gleiche West-Formel — nur eine Karte anheben hätte den Riss zur nächsten Naht verschoben). Ergebnis: alle Nähte ≤1.7; einziger >2-Sprung ist der **gewollte** am Union-Eingang.
+- **`debug_ram.py` aufgerüstet:** Spalten `glX/glY/prog` (identischer Coord-Tracker + `route_progress` wie der Env) und `Rew` (kumulierter Gain via `_GainTracker` = 1:1-Klon der Frontier-Logik — zeigt live, was die Env für dieselbe Bewegung zahlen würde; bewusst NUR der Navigations-Gain, kein XP/Tile/Trap). Damit sind Naht-Läufe direkt am Spiel verifizierbar.
+
+## V. Ei-Abhol-Phase — zustandsabhängige Navigation (User-Idee)
+
+**Problem:** Nach dem Orden ist das nächste Spielziel das Togepi-Ei im Violet-PC (Route 32 ist ohne Ei ge-gated). Der Violet-West-Gain zieht aber am PC **vorbei** Richtung Route-32-Abzweig — das eigentliche Ziel liegt vom Arena-Ausgang aus **östlich**, also genau gegenläufig.
+
+**Mechanismus — die Reward-Struktur schaltet mit dem Spielfortschritt um:**
+`egg_phase = (Orden ≥ 1) UND (keine Ei-Linie)` — beide Bedingungen sind **monoton** (Orden bleibt, Ei-Linie zählt auch das geschlüpfte Togepi) → die Phase geht genau einmal an und für immer aus → **kein Flip-Flop-Farm** über den Modus-Wechsel.
+
+In der Phase:
+1. **Arena (10,7) → Trap-Map** — live beim Orden-Gewinn im Step UND in `reset()` für Savestates, die schon mit Orden starten. Die Schritt-Strafe drückt die KI aus der Arena raus; dauerhaft (dort gibt es nichts mehr).
+2. **Routen-Gain pausiert GLOBAL** (prog=None wie in Innenräumen) — sonst würden West-Gain und PC-Gain gegeneinander ziehen. (Anzeige-Nebeneffekt: `mean_dist` friert in der Phase ein.)
+3. **PC-Gain (BEISPIEL 2b):** `egg_nav_progress = 20 − Manhattan((x,y), (17,14))`, nur in Violet City (10,5), **lokale** Koordinaten (Start+Ziel auf einer Karte → kein Offset-Risiko). Exakter Klon der `_stable_prog`-Mechanik: Stale-Filter, >2-Re-Baseline ohne Reward, gain≤2.1. Simuliert verifiziert: Arena→PC zahlt ~18, PC-Tür rein/raus 0.0, Tod→Respawn 0.0.
+4. **`EGG_PC_MILESTONE` (+10):** erstes PC-Betreten WÄHREND der Phase — eigener Flag (nicht `MILESTONE_BONUS`, gleiche ROUTE_ORDER-Falle wie in Q); feuert auch, wenn das PC vor dem Orden schon besucht war. Koexistiert mit `PC_ENTRY_REWARD` (+30, 1×/Episode).
+5. **Phase endet mit dem Ei** → 2b verstummt, der normale Routen-Gain resumed über Stale-Filter + Re-Baseline (Wiedereinstieg zahlt nichts).
+
+**Ergebnis (erster 17M+-Lauf danach):** `middle/mean_has_egg` **0.1–0.2 → 0.4–0.55** (×2–3, steigend) — die Kette Orden→PC→Ei sitzt. **Nebenwirkung:** Interferenz in Violet — middle-Episoden trainieren „mit Orden → Ost zum PC", start-Episoden brauchen „ohne Orden → West zur Arena"; bis das Netz sauber auf die Badge-/Ei-Features konditioniert, schwankt die start-Arena-Quote stärker (75 % Violet, zeitweise nur 15 % Arena).
+
+## W. Arena-Ready-Score — Meilenstein × Kampf-Zustand (User-Idee)
+
+**Befund:** Falkner-Win-Rate nur ~50 % — aber `middle/mean_badges` ≈ 0.8–1.0 zeigt: aus Gym-nahen Starts (volle HP) gewinnt die KI fast immer. Die ~50 % betreffen die **Anfahrts-Episoden**: angeschlagen ankommen (Route-30/31-Kämpfe, kaum PC-Heilung) → 4-Kämpfe-Marathon mit halbem Team. **Win-Rate = Funktion des Ankunftszustands, nicht des Kampf-Skills.**
+Die 50/50-Lotterie destabilisiert zudem den Anfahrts-Gradienten (Sieg/Niederlage geben derselben Navigations-Kette abwechselnd positive/negative Advantages → Teil der Badge-Oszillation). Doppel-Bestrafung obendrauf: Blackout ohne gesetzten Heilpunkt wirft **nach New Bark Town** zurück — ein Arena-Verlust kostet vom Start aus die halbe Episode.
+
+**Mechanismus:** Der Arena-Meilenstein (`MILESTONE_BONUS[(10,7)]`, 20 → **30**) skaliert mit dem Zustand beim **Betreten**:
+```
+score  = 0.5·HP-Ratio (Mon 1) + 0.5·PP-Ratio     ← genau das, was das PC auffüllt
+faktor = ARENA_READY_FLOOR + (1−FLOOR)·score      ← FLOOR = 0.25: nie unter 7.5
+```
+Geheilt = 30 · halb angeschlagen ≈ 19 (≈ alter Fixwert) · fast tot ≈ 8. PP-Referenz = `_max_pp_seen` (dieselbe wie beim Heal-Reward). Die badge=0-Konditionierung ist **gratis**: mit Orden ist die Arena Trap bzw. via ROUTE_ORDER vor-markiert → Meilenstein feuert nur beim Erst-Anlauf.
+
+**Warum der Floor wichtig ist:** Ohne ihn wäre „angeschlagen rein" fast wertlos → würde die Arena-Meidung verstärken, die wir gerade bekämpfen. Mit Floor bleibt der Sog immer da — geheilt ist er nur 4× stärker.
+
+**Doppelnutzen des Heilens:** (1) Win-Rate Richtung middle-Niveau, (2) Heilen am Violet-PC setzt den **Respawn-Anker auf Violet** — eine Niederlage kostet dann nur noch den 30-Sekunden-Rückweg PC→Arena mit geheiltem Sofort-Retry, statt Rückwurf nach NBT. Verlieren verliert seinen Schrecken strukturell, ohne den Tod zu verbilligen.
+
+**Warum die KI das lernen kann:** Das Verhalten existiert schon (`start/mean_pc_heals` 5–20 %) → verstärken statt entdecken (wie bei der Ei-Kette); γ=0.997 trägt den Kredit über die ~20–40 Schritte PC→Arena (~90 % kommen an); HP und PP sind **Beobachtungs-Features** (#6/#9) → die Konditionierung „niedrig → erst PC" ist lernbar.
+
 ## Neue offene Punkte
 
-1. **`middle/mean_has_egg`** — holt die KI das Ei aus dem Gym-Bereich ab? (Erfolgssignal der Ei-Kette.)
+1. ~~**`middle/mean_has_egg`** — holt die KI das Ei aus dem Gym-Bereich ab?~~ ✓ **Beantwortet:** 0.4–0.55 und steigend seit der Ei-Abhol-Phase (V).
 2. **`start/…` & `middle/…` vs. `end/…`** — kommt der Erfolg aus echter **Navigation** (start/middle steigen) oder nur von den „geschenkten" end-Starts (post-egg)?
 3. **Curriculum-Savestates in Union Cave + Route 33** fehlen noch (würden diese Segmente direkt trainieren; die Gains + Eintritts-Meilensteine sind da).
 4. **Azalea-Leg** weiterhin provisorisch (reiner West-Gain) — Bugsy-Arena lokalisieren für Nudge/Meilenstein.
+5. **`start/mean_pc_heals`** — springt das Heilen-vor-der-Arena durch den Arena-Ready-Score (W) an? (Der Win-Rate-Hebel.)
+6. **`start/mean_has_egg`** — verbindet sich die Start-Kette mit der Ei-Kette? Erwartung: steigt `start/mean_badges` wieder auf ~0.3, sollte `start/mean_has_egg` erstmals auf ~0.1+ anspringen (Übergabepunkt „in der Arena, Orden frisch" = exakt das Gym_after_boss-Terrain). Bleibt es trotz Badge-Anstieg bei 0 → Naht untersuchen.
+7. **Interferenz in Violet beobachten** (V): stabilisiert sich die start-Arena-Quote, sobald die Badge-/Ei-Konditionierung sitzt? Falls dauerhaft nicht: symmetrische Vervollständigung („badge=0 → Gain Richtung Arena-Tür", exakt die 2b-Mechanik mit anderem Ziel) als nächster Hebel.
 
 ## Dateien in diesem Nachtrag
 
@@ -331,3 +380,11 @@ Das Togepi-Ei aus dem Violet-Pokécenter ist ein echtes **Spiel-Gate**: ohne Ei 
 | `pokemon_env.py` | Ei-Reward nur 0→1; `PC_ENTRY_REWARD` + `_pc_egg_entered`-Flag; Badge-Termination auskommentiert; Union-Cave/Azalea-Milestones; `_savestate_group()` + `_episode_group`; `_get_info`-Keys `has_egg`/`union_cave_visited`/`savestate_group`; **Knofensa-Turm `(3,1)` → Trap-Map** (T) |
 | `config.py` | `SAVESTATE_GROUPS` (namens-basiert) |
 | `train.py` | Per-Gruppe-Logging (start/middle/end × 17 Metriken); aggregiert `mean_has_egg` + `mean_union_cave_visited` |
+
+**Dateien der Iterationen U–W:**
+
+| Datei | Änderung |
+|---|---|
+| `pokemon_env.py` | Violet-Leg `63.5−0.267·gx` (U); Route 33 + Azalea `61.2→68.0` (U); **Ei-Abhol-Phase**: `egg_phase`, `egg_nav_progress` + BEISPIEL 2b, Arena→Trap bei Orden (Step + reset), `EGG_PC_MILESTONE`, Routen-Gain-Pausierung (V); **Arena-Ready-Score**: `MILESTONE_BONUS[(10,7)] 20→30` × HP/PP-Score, `ARENA_READY_FLOOR` (W) |
+| `debug_ram.py` | Spalten `glX/glY/prog` (Env-identisch), `E…`-Anzeige der Ei-Phase, `Rew`-Spalte via `_GainTracker` (U/V) |
+| `README.md` / `requirements.txt` | GitHub-Veröffentlichung: README (Deutsch, Meilenstein-Screenshots in `assets/`), gepinnte Abhängigkeiten |

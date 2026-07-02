@@ -55,7 +55,7 @@ SAVE_STATE_PATHS = [
     "./Savestates/PGV_after_boss_before_egg.state", #M
     "./Savestates/PGV_Pokecenter_at_assistant.state", #M
     "./Savestates/PGV_Gym1.state", #M
-    "./Savestates/PGV_before_egg_gate.state",  #M
+    #"./Savestates/PGV_before_egg_gate.state",  #M
     "./Savestates/PGV_Route32_2.state", # E after egg on route 32
     "./Savestates/PGV_PC_before_egg.state", #M
     "./Savestates/PGV_Route32_4.state", #E

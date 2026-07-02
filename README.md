@@ -29,10 +29,12 @@ Der Kern des Projekts steckt im **Reward-Design** — hier die Highlights:
 
 - **Gain-Reward (Pfad-Fortschritt):** Statt radialer Distanz zum Start misst der Agent den Fortschritt *entlang der intendierten Route* und wird nur für die **Zunahme** belohnt → ein dichtes, richtungs-korrektes Vorwärtssignal, das ihn gezielt zum Ziel zieht statt in Sackgassen. Tod-/Teleport-robust und gegen „Tür-rein-raus-Farming" abgesichert.
 - **Weltkoordinaten (Seam-Stitching):** Die pro Karte nur lokalen RAM-Koordinaten werden zu einer durchgehenden Weltebene zusammengeklebt → der Agent entwickelt ein Gefühl für „Richtung" und „Nähe".
+- **Phasen-Navigation (Ei-Quest):** Die Reward-Struktur schaltet mit dem Spielfortschritt um: Nach dem 1. Orden wird die Arena zur Trap-Map, ein eigener Gain zieht zum Pokécenter (dort wartet das Togepi-Ei — ohne das Route 32 gesperrt ist), und mit dem Ei übernimmt wieder der normale Routen-Gain. Da Orden und Ei nie „zurückgehen", ist die Umschaltung unausnutzbar — und der Agent *sieht* beide Zustands-Bits, kann die Phasen also unterscheiden.
 - **Curriculum Learning:** Ein Pool von Savestates (Gruppen *start / middle / end*) lässt den Agenten alle Gebiete **gleichzeitig** üben und frühere nicht vergessen.
 - **Navigations-Gedächtnis:** explizite Features (Bewegungsrichtung, Kartenwechsel, „Schritte seit Kartenwechsel") gegen Pendeln an mehrdeutigen Stellen — billiger und kontrollierbarer als ein LSTM.
 - **Grind-Sättigung:** XP-/Schadens-Reward flacht pro Karte hyperbolisch ab → Anti-Camping, ohne Kämpfe hart zu verbieten.
 - **Trap-Maps:** nutzlose Innenräume geben beim Betreten eine kleine Strafe → der Agent bleibt auf der produktiven Route.
+- **Zustands-skalierter Boss-Meilenstein:** Der Arena-Bonus skaliert mit HP & PP beim Betreten — frisch geheilt zahlt er das Vierfache des angeschlagenen Werts. So lernt der Agent die Sequenz „erst ins Pokécenter, dann zum Boss" (und ein geheilter Anlauf senkt nebenbei die Kosten einer Niederlage: Respawn im nahen PC statt am Spielstart).
 - **Flucht-Logik:** Strafe fürs Weglaufen aus *gewinnbaren* Kämpfen, Bonus fürs Verlassen *aussichtsloser* (z. B. leere Angriffs-PP).
 - **Robustheit:** Ein Absturz eines Worker-Emulators reißt nicht das ganze Training mit — das Modell wird bei einem Crash gerettet.
 
@@ -130,8 +132,8 @@ Das **Savestate-Curriculum** (`SAVE_STATE_PATHS`) bestimmt, an welchen Punkten d
 
 Ehrliche Einordnung des aktuellen Stands:
 
-- Aus **Gym-nahen** Starts gewinnt der Agent Falkner **zuverlässig** und holt zunehmend das Togepi-Ei ab.
-- Aus **weiten** Starts (New Bark Town) ist die Navigation bis zur Arena noch **instabil** (Grenzzyklus) — daran wird gearbeitet.
+- Aus **Gym-nahen** Starts gewinnt der Agent Falkner **zuverlässig**; seit der Phasen-Navigation holt er das Togepi-Ei in **~40–55 %** dieser Episoden ab (vorher ~15 %).
+- Aus **weiten** Starts (New Bark Town) erreicht der Agent Violet City in ~75 % der Episoden; das Abbiegen zur Arena ist noch **instabil** (Grenzzyklus) — daran wird gearbeitet.
 - Über sehr lange Läufe kann ein **nativer PyBoy-Crash** auftreten (statistisch praktisch unvermeidlich); das Trainings-Skript fängt das ab und rettet das Modell.
 
 ---

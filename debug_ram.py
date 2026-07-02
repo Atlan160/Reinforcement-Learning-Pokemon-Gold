@@ -44,14 +44,9 @@ import sys
 from pyboy import PyBoy
 from config import ROM_PATH, SAVE_STATE_PATHS
 from global_coords import GlobalCoordinateTransform
-from pokemon_env import route_progress
+from pokemon_env import route_progress, egg_nav_progress, PROGRESS_REWARD, EGG_NAV_REWARD
 
 sys.stdout.reconfigure(encoding='utf-8')
-
-# Globaler Coord-Tracker – IDENTISCH zum Env (gleiche MAP_OFFSETS). Liefert gx/gy;
-# daraus route_progress() = exakt der prog-Wert, den die Gain-/Frontier-Logik sieht.
-_GCT = GlobalCoordinateTransform()
-
 
 # ── Welchen Save State laden? ────────────────────────────────
 # 0 = PGV.state (New Bark Town) ← empfohlen für Map-ID Tour
@@ -62,7 +57,49 @@ _GCT = GlobalCoordinateTransform()
 final_path=SAVE_STATE_PATHS[-1]
 # Für den Torhaus/Naht-Test: in Violet City starten (direkt am Torhaus → Route 31).
 # Beliebig umstellen (z.B. PGV_Route31_1.state), je nachdem welche Naht du prüfst.
-final_path="./Savestates/PGV_Route32_2.state"
+final_path="./Savestates/PGV_Gym_after_boss.state"
+
+# Globaler Coord-Tracker – IDENTISCH zum Env (gleiche MAP_OFFSETS). Liefert gx/gy;
+# daraus route_progress() = exakt der prog-Wert, den die Gain-/Frontier-Logik sieht.
+_GCT = GlobalCoordinateTransform()
+
+
+class _GainTracker:
+    """
+    Spiegelt die Gain-Reward-Logik der Env (BEISPIEL 2 / 2b in pokemon_env.py):
+    Stale-Filter (zwei nahe Messungen ≤2), >2-Re-Baseline OHNE Reward,
+    0 < gain ≤ 2.1 zahlt gain × rate; Frontier zieht mit.
+
+    Läuft hier pro FRAME statt pro Env-Schritt (24 Frames) – die SUMME pro
+    gelaufener Kachel ist identisch, nur feiner aufgelöst. Die Rew-Spalte zeigt
+    also live, was die Env für dieselbe Bewegung zahlen würde.
+    ACHTUNG: NUR der Navigations-Gain (Route + Ei-Phase). Tile/XP/Trap/
+    Meilensteine brauchen die volle Env und fehlen hier bewusst.
+    """
+    def __init__(self, rate):
+        self.rate     = rate
+        self.prev     = None
+        self.stable   = None
+        self.frontier = 0.0
+
+    def update(self, prog):
+        r = 0.0
+        if prog is None:
+            self.prev = None
+        else:
+            if self.prev is not None and abs(prog - self.prev) <= 2.0:
+                if self.stable is None or abs(prog - self.stable) > 2.0:
+                    self.frontier = prog        # Teleport/erststabil → Re-Baseline, KEIN Reward
+                else:
+                    g = prog - self.frontier
+                    if 0.0 < g <= 2.1:
+                        r = g * self.rate       # Vorwärtsbewegung → zahlt
+                        self.frontier = prog
+                self.stable = prog
+            self.prev = prog
+        return r
+
+
 
 
 def load_state(pyboy: PyBoy):
@@ -116,7 +153,15 @@ def read_all(pyboy):
     badge_d857 = pyboy.memory[0xD857]
 
     # ── Ei im Team? Spezies-Liste ab 0xDA23, Ei = Marker 0xFD (253, "EGG") ─
-    has_egg = int(0xFD in [pyboy.memory[0xDA23 + i] for i in range(party)])
+    species_list = [pyboy.memory[0xDA23 + i] for i in range(party)]
+    has_egg = int(0xFD in species_list)
+
+    # ── EI-ABHOL-PHASE aktiv? (Orden ja, Ei-LINIE nein — wie im Env) ────────
+    # Ei-LINIE = Ei (0xFD) ODER Togepi (175). In der Phase pausiert der Routen-
+    # Gain (prog=None) und egg_nav_progress übernimmt — exakt das Env-Verhalten,
+    # damit die Rew-Spalte 1:1 zeigt, was die Env zahlen würde.
+    egg_line  = (0xFD in species_list) or (175 in species_list)
+    egg_phase = badge_d57c > 0 and not egg_line
 
     # ── Globale Weltkoordinaten + Pfad-Fortschritt (route_progress) ──────────
     # Exakt wie im Env: to_global(bank,num,x,y) → gx,gy → route_progress(leg).
@@ -128,14 +173,19 @@ def read_all(pyboy):
         prog = None
     else:
         glx, gly = g
-        prog = route_progress((map_bank, map_number), glx, gly)
+        prog = (route_progress((map_bank, map_number), glx, gly)
+                if not egg_phase else None)
+
+    # ── Nähe-zum-PC-Metrik der Ei-Abhol-Phase (nur Violet City (10,5)) ──────
+    # Anzeige als "E…" in der prog-Spalte, solange die Phase aktiv ist.
+    egg_prog = egg_nav_progress((map_bank, map_number), x, y) if egg_phase else None
 
     return (map_bank, map_number, x, y,
             battle_type,
             hp, max_hp, level, xp, party,
             enemy_hp, enemy_max_hp,
             badge_d57c, badge_d857, has_egg,
-            glx, gly, prog)
+            glx, gly, prog, egg_prog)
 
 
 # ── Badge-Region-Watcher (zeigt beim Orden-Erhalt, WELCHES Byte kippt) ──
@@ -176,13 +226,19 @@ if __name__ == "__main__":
         pyboy.tick()
 
     # Spaltenüberschriften
-    print(f"  {'Bank':>4} {'Map':>4}   {'X':>4} {'Y':>4}   {'glX':>5} {'glY':>5} {'prog':>6}   {'Kampf':>5}   {'HP':>9}  {'Lv':>3}  {'XP':>8}  {'Pty':>3}   {'GegHP':>9}   {'Orden':>12} {'Orden':>12}  {'Ei':>4}")
-    print(f"  {'DA00':>4} {'DA01':>4}   {'D20D':>4} {'D20E':>4}   {'glob':>5} {'glob':>5} {'leg':>6}   {'D116':>5}   {'DA4C-F':>9}  {'DA49':>3}  {'DA32-4':>8}  {'DA22':>3}   {'D0FF-2':>9}   {'D57C':>12} {'D857':>12}  {'0xFD':>4}")
-    print("  " + "─" * 116)
+    print(f"  {'Bank':>4} {'Map':>4}   {'X':>4} {'Y':>4}   {'glX':>5} {'glY':>5} {'prog':>6} {'Rew':>8}   {'Kampf':>5}   {'HP':>9}  {'Lv':>3}  {'XP':>8}  {'Pty':>3}   {'GegHP':>9}   {'Orden':>12} {'Orden':>12}  {'Ei':>4}")
+    print(f"  {'DA00':>4} {'DA01':>4}   {'D20D':>4} {'D20E':>4}   {'glob':>5} {'glob':>5} {'leg':>6} {'kum.':>8}   {'D116':>5}   {'DA4C-F':>9}  {'DA49':>3}  {'DA32-4':>8}  {'DA22':>3}   {'D0FF-2':>9}   {'D57C':>12} {'D857':>12}  {'0xFD':>4}")
+    print("  " + "─" * 125)
 
     prev = None
     prev_badge_window = None
     prev_species = None
+
+    # Gain-Reward-Spiegel (siehe _GainTracker): Routen-Gain + Ei-Abhol-Gain,
+    # kumuliert in der Rew-Spalte. Zahlt es an einer Naht doppelt/nicht → sichtbar.
+    route_gain = _GainTracker(PROGRESS_REWARD)   # BEISPIEL 2  (Routen-Gain)
+    egg_gain   = _GainTracker(EGG_NAV_REWARD)    # BEISPIEL 2b (Ei-Abhol-Phase)
+    gain_total = 0.0
 
     try:
         while pyboy.tick():
@@ -210,13 +266,17 @@ if __name__ == "__main__":
             prev_species = sp
 
             current = read_all(pyboy)
+            # Gain-Spiegel bei JEDEM Frame updaten (nicht nur bei Änderung), damit
+            # Stale-Filter/Frontier exakt wie in der Env mitlaufen.
+            # current[-2] = prog (Routen-Gain), current[-1] = egg_prog (Ei-Phase).
+            gain_total += route_gain.update(current[-2]) + egg_gain.update(current[-1])
             if current != prev:
                 (map_bank, map_number, x, y,
                  battle_type,
                  hp, max_hp, level, xp, party,
                  enemy_hp, enemy_max_hp,
                  badge_d57c, badge_d857, has_egg,
-                 glx, gly, prog) = current
+                 glx, gly, prog, egg_prog) = current
 
                 hp_str   = f"{hp}/{max_hp}"
                 geg_str  = f"{enemy_hp}/{enemy_max_hp}" if enemy_hp > 0 else "—"
@@ -225,7 +285,12 @@ if __name__ == "__main__":
                 ei_str   = "JA" if has_egg else "—"
                 glx_str  = f"{glx:>5}" if glx is not None else f"{'-':>5}"
                 gly_str  = f"{gly:>5}" if gly is not None else f"{'-':>5}"
-                prog_str = f"{prog:6.1f}" if prog is not None else f"{'-':>6}"
+                # Ei-Abhol-Phase aktiv + in der Zone → "E…" (PC-Gain-Metrik, 10→20);
+                # sonst der normale Routen-prog. Env-Verhalten 1:1 gespiegelt.
+                if egg_prog is not None:
+                    prog_str = f"E{egg_prog:5.1f}"
+                else:
+                    prog_str = f"{prog:6.1f}" if prog is not None else f"{'-':>6}"
 
                 # Kampfstatus-Label
                 if battle_type == 0:
@@ -237,7 +302,7 @@ if __name__ == "__main__":
                 else:
                     bat_str = f"#{battle_type}"
 
-                print(f"  {map_bank:>4} {map_number:>4}   {x:>4} {y:>4}   {glx_str} {gly_str} {prog_str}   {bat_str:>5}   "
+                print(f"  {map_bank:>4} {map_number:>4}   {x:>4} {y:>4}   {glx_str} {gly_str} {prog_str} {gain_total:8.1f}   {bat_str:>5}   "
                       f"{hp_str:>9}  {level:>3}  {xp:>8}  {party:>3}   {geg_str:>9}   {b57c_str:>12} {b857_str:>12}  {ei_str:>4}")
                 prev = current
 

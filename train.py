@@ -426,7 +426,7 @@ def run_training(checkpoint_path: str = None):
         model.learn(
             total_timesteps     = TOTAL_TIMESTEPS,
             callback            = [logger_cb, eval_cb, checkpoint_cb],
-            reset_num_timesteps = True,
+            reset_num_timesteps = False,
             
         )
         print("\n\n✓ Training erfolgreich abgeschlossen!")
@@ -502,6 +502,6 @@ if __name__ == "__main__":
             print(f"→ Neuester Checkpoint gefunden: {latest}")
         else:
             print("→ Kein Checkpoint gefunden, starte frisches Training.")
-        run_training(checkpoint_path="models/pokemon_ppo_16000000_steps.zip")   # None = frisch, Pfad = fortsetzen
+        run_training(checkpoint_path="checkpoints/pokemon_ppo_7000000_steps")   # None = frisch, Pfad = fortsetzen
     else:
         run_training()
