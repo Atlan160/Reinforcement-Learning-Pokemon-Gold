@@ -57,7 +57,7 @@ sys.stdout.reconfigure(encoding='utf-8')
 final_path=SAVE_STATE_PATHS[-1]
 # Für den Torhaus/Naht-Test: in Violet City starten (direkt am Torhaus → Route 31).
 # Beliebig umstellen (z.B. PGV_Route31_1.state), je nachdem welche Naht du prüfst.
-final_path="./Savestates/PGV_Gym_after_boss.state"
+final_path="./Savestates/PGV_Pokecenter_Violet_city.state"
 
 # Globaler Coord-Tracker – IDENTISCH zum Env (gleiche MAP_OFFSETS). Liefert gx/gy;
 # daraus route_progress() = exakt der prog-Wert, den die Gain-/Frontier-Logik sieht.

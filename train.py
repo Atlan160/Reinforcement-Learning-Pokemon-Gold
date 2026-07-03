@@ -502,6 +502,6 @@ if __name__ == "__main__":
             print(f"→ Neuester Checkpoint gefunden: {latest}")
         else:
             print("→ Kein Checkpoint gefunden, starte frisches Training.")
-        run_training(checkpoint_path="checkpoints/pokemon_ppo_7000000_steps")   # None = frisch, Pfad = fortsetzen
+        run_training(checkpoint_path=latest)   # None = frisch, Pfad = fortsetzen
     else:
         run_training()

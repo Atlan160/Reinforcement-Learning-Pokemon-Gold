@@ -41,7 +41,8 @@ SAVE_STATE_PATHS = [
     "./Savestates/PGV_Route29_3.state",
     "./Savestates/PGV_Route29_4.state",
     "./Savestates/PGV_Pokecenter_am_Schalter.state",
-    "./Savestates/PGV_Pokecenter_Violet_city.state",
+    "./Savestates/PGV_Pokecenter_Violet_city.state", 
+    "./Savestates/PGV_Pokecenter_Violet_city_before_door.state",
     "./Savestates/PGV_Route31_1.state", # S
     "./Savestates/PGV_Route31_2.state",
     "./Savestates/PGV_Route31_3.state",
@@ -50,14 +51,14 @@ SAVE_STATE_PATHS = [
     #"./Savestates/PGV_Knofensaturm_1.state",
     #"./Savestates/PGV_Knofensaturm_2.state",
     #"./Savestates/PGV_Knofensaturm_Boss.state",
+    "./Savestates/PGV_Gym1.state", #M
     "./Savestates/PGV_Gym_boss.state", #M
-    "./Savestates/PGV_Gym_after_boss.state", #M
+    #"./Savestates/PGV_Gym_after_boss.state", #M
+    "./Savestates/PGV_PC_before_egg.state", #M
     "./Savestates/PGV_after_boss_before_egg.state", #M
     "./Savestates/PGV_Pokecenter_at_assistant.state", #M
-    "./Savestates/PGV_Gym1.state", #M
     #"./Savestates/PGV_before_egg_gate.state",  #M
     "./Savestates/PGV_Route32_2.state", # E after egg on route 32
-    "./Savestates/PGV_PC_before_egg.state", #M
     "./Savestates/PGV_Route32_4.state", #E
     "./Savestates/PGV_Route32_5.state", #E
     "./Savestates/PGV_Union_cave_1.state", #E
@@ -151,7 +152,7 @@ Wichtige Hyperparameter für Pokemon (längere Episoden als Pong!):
                   → Pokemon braucht viel Exploration → höherer Wert nötig!
 """
 
-LEARNING_RATE  = 6E-5
+LEARNING_RATE  = 1E-4
 N_STEPS        = 4096       # Schritte pro Umgebung vor Update
 # BATCH_SIZE: GPUs rechnen effizienter mit größeren Batches.
 # RTX 4070 hat 12 GB VRAM → 512 oder 1024 sind unproblematisch.

@@ -12,6 +12,36 @@ Ein **PPO-Agent**, der lernt, **Pokémon Gold** selbstständig zu spielen — nu
 
 ---
 
+## 🎓 Für Einsteiger: Was ist Reinforcement Learning? Was macht PPO?
+
+**Reinforcement Learning (RL)** ist Lernen durch Versuch und Irrtum. Anders als beim klassischen maschinellen Lernen gibt es **keine Beispiel-Lösungen** — niemand zeigt der KI, welche Taste richtig ist. Stattdessen probiert der **Agent** (die KI) Aktionen aus, und die **Umgebung** (das Spiel) antwortet mit einer neuen Situation und einer Zahl: dem **Reward**.
+
+```
+  Beobachtung (Bild + Spielzustand)
+         │
+         ▼
+  Agent wählt eine Taste ──► Spiel reagiert ──► Reward (+/−)
+         ▲                                        │
+         └────────── Policy anpassen ◄────────────┘
+```
+
+Am Anfang drückt der Agent zufällig herum. Aktionen, die — auch erst viel später — zu Belohnung führen, werden wahrscheinlicher: So entsteht Schritt für Schritt eine **Policy** (Strategie). Maximiert wird dabei nicht der nächste Reward, sondern die **Summe über die Zukunft**, leicht abgezinst mit dem Discount-Faktor γ („Reward heute zählt mehr als Reward in 1000 Schritten").
+
+Zwei Konsequenzen daraus prägen dieses Projekt:
+
+- **Das Reward-Design ist die eigentliche Arbeit.** Die KI lernt exakt das, was belohnt wird — inklusive aller Schlupflöcher. Viele der Mechanismen unten sind Antworten auf tatsächlich gefundene Exploits (*Reward-Hacking*: Tür-rein-raus-Farming, Ei-Doppelbelohnung, …).
+- **Das Signal muss dicht genug sein.** „+400 für den Orden" allein reicht nicht — die Chance, per Zufall vom Start bis zur Arena zu stolpern, ist praktisch null. Deshalb bekommt der Agent ein dichtes Vorwärtssignal entlang der Route (Gain-Reward).
+
+**PPO (Proximal Policy Optimization)** ist der Algorithmus, der die Policy anpasst — der heutige De-facto-Standard. Er arbeitet in einer Schleife:
+
+1. **Sammeln:** Die aktuelle Policy spielt — hier auf 20 Emulatoren parallel, ~82.000 Spielschritte pro Runde.
+2. **Bewerten:** Für jede Aktion wird der **Advantage** berechnet: *War das Ergebnis besser oder schlechter als erwartet?* Die Erwartung liefert ein zweiter Kopf desselben Netzes (der **Critic**), der jeden Zustand bewertet — die Actor-Critic-Architektur.
+3. **Anpassen:** Überdurchschnittlich gute Aktionen werden wahrscheinlicher, schlechte unwahrscheinlicher.
+
+Das **„Proximal"** ist der Clou: PPO **begrenzt (clippt)** jede Änderung, sodass die neue Policy nie weit von der alten abweicht. Ein einzelner verrauschter Datenblock kann so nicht die ganze gelernte Strategie zerstören — das macht PPO stabil und vergleichsweise gutmütig im Tuning. Ein kleiner **Entropie-Bonus** (`ENT_COEF`) belohnt zusätzlich Unentschlossenheit, damit der Agent neugierig bleibt und nicht zu früh in einer Routine erstarrt.
+
+---
+
 ## 🧠 Wie es funktioniert
 
 Der Agent sieht in jedem Schritt:
